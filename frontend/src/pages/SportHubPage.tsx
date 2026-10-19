@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { CirclePlus, Trophy, Volleyball } from 'lucide-react'
+import { CirclePlus, Trophy } from 'lucide-react'
 import { useAppData } from '../app/AppDataContext'
 import { CityChooser } from '../components/CityChooser'
 import { PageHeader } from '../components/PageHeader'
