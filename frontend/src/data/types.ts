@@ -8,6 +8,12 @@ export type EventStatus = 'published' | 'unpublished'
 
 export type ParticipationStatus = 'confirmed' | 'pending' | 'rejected'
 
+export interface SocialLink {
+  platform: string
+  url: string
+  label?: string
+}
+
 export interface User {
   id: string
   name: string
@@ -16,6 +22,7 @@ export interface User {
   role: UserRole
   avatarUrl?: string
   bio?: string
+  socialLinks?: SocialLink[]
   birthDate?: string | null
   maritalStatus?: string | null
   childrenCount?: number | null
@@ -64,7 +71,9 @@ export interface Event {
   gallery?: string[]
   rating: number
   distanceKm?: number
-  eventType?: 'game' | 'training'
+  eventType?: 'game' | 'training' | 'tournament'
+  latitude?: number | null
+  longitude?: number | null
 }
 
 export interface Participation {
@@ -85,6 +94,8 @@ export interface Comment {
 
 export interface Notification {
   id: string
+  type?: string
+  isRead?: boolean
   createdAt: string
   title: string
   body: string
@@ -92,6 +103,15 @@ export interface Notification {
   linkUrl?: string
   eventTag?: string
   eventDate?: string
+}
+
+export interface LocationSuggestion {
+  label: string
+  address: string
+  city: string
+  district: string
+  latitude: number
+  longitude: number
 }
 
 export interface AppState {

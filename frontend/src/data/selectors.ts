@@ -13,6 +13,9 @@ export interface CreateEventInput {
   level: number
   sportName: string
   minAge?: number
+  eventType: 'game' | 'training' | 'tournament'
+  latitude?: number
+  longitude?: number
 }
 
 export function getPublishedEvents(state: AppState): Event[] {

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { fetchEvent } from '../data/api'
+import { fetchEvent, fetchEventParticipants } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
 import { MobileActionBar } from '../components/MobileActionBar'
 import { PrimaryButton } from '../components/PrimaryButton'
@@ -19,6 +19,7 @@ import {
   getUserParticipation,
 } from '../data/selectors'
 import { formatEventDate } from '../lib/format'
+import type { User } from '../data/types'
 
 export function EventDetailPage() {
   const { id } = useParams()
@@ -26,6 +27,7 @@ export function EventDetailPage() {
   const { state, currentUser, like, review, favorite, setCity } = useAppData()
   const event = state.events.find((item) => item.id === id)
   const [lookup, setLookup] = useState<'loading' | 'missing'>('loading')
+  const [participantProfiles, setParticipantProfiles] = useState<User[]>([])
   const requestedId = useRef<string | null>(null)
 
   useEffect(() => {
@@ -38,6 +40,13 @@ export function EventDetailPage() {
       })
       .catch(() => setLookup('missing'))
   }, [id, event, setCity])
+
+  useEffect(() => {
+    if (!id) return
+    let cancelled = false
+    void fetchEventParticipants(id).then((users) => { if (!cancelled) setParticipantProfiles(users) }).catch(() => { if (!cancelled) setParticipantProfiles([]) })
+    return () => { cancelled = true }
+  }, [id])
 
   const sport = event ? state.sports.find((item) => item.id === event.sportId) : undefined
   const organizer = event ? state.users.find((user) => user.id === event.organizerUserId) : undefined
@@ -54,6 +63,9 @@ export function EventDetailPage() {
   const liked = state.likedEvents.includes(event.id)
   const { date, time } = formatEventDate(event.startsAt)
   const price = event.discountedPrice ?? event.price
+  const mapHref = event.latitude != null && event.longitude != null
+    ? `https://yandex.ru/maps/?pt=${event.longitude},${event.latitude}&z=16&l=map`
+    : `https://yandex.ru/maps/?text=${encodeURIComponent([event.city, event.address].filter(Boolean).join(', '))}`
   const canJoin = !unpublished && (!myPart || myPart.status === 'rejected')
   const showMobileCta = canJoin || (!unpublished && myPart?.status === 'pending')
 
@@ -76,13 +88,11 @@ export function EventDetailPage() {
               <ArrowLeft size={19} />
             </Link>
             <div className="flex gap-2">
-              {[Route, CalendarPlus, Share2].map((Icon, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-black/30 text-white backdrop-blur-md"
-                  aria-label="Действие с событием"
-                >
+              <a href={mapHref} target="_blank" rel="noreferrer" className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-black/30 text-white backdrop-blur-md" aria-label="Открыть в Яндекс Картах">
+                <Route size={17} />
+              </a>
+              {[CalendarPlus, Share2].map((Icon, index) => (
+                <button key={index} type="button" className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-black/30 text-white backdrop-blur-md" aria-label="Действие с событием">
                   <Icon size={17} />
                 </button>
               ))}
@@ -234,11 +244,12 @@ export function EventDetailPage() {
           </button>
         </div>
 
-        {organizer && (
-          <p className="mt-5 text-sm text-muted">
-            Организатор: <span className="font-medium text-white">{organizer.name}</span>
-          </p>
+        {participantProfiles.length > 0 && (
+          <section className="mt-6"><h2 className="text-xl font-bold tracking-[-0.025em]">Участники</h2><div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {participantProfiles.map((participant) => <Link key={participant.id} to={`/users/${participant.id}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.08] bg-card p-3 transition-colors hover:border-accent/50"><img src={participant.avatarUrl || '/images/hero.png'} alt="" className="h-10 w-10 shrink-0 rounded-full object-cover" /><span className="min-w-0"><span className="block truncate font-semibold text-white">{participant.name}</span><span className="block truncate text-xs text-muted">{participant.city || 'Город не указан'}</span></span></Link>)}
+          </div></section>
         )}
+        {organizer && <p className="mt-5 text-sm text-muted">Организатор: <Link to={`/users/${organizer.id}`} className="font-medium text-white hover:text-accent">{organizer.name}</Link></p>}
       </div>
 
       {showMobileCta && (

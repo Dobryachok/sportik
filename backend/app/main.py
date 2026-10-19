@@ -80,27 +80,51 @@ def age_from_birth_date(value: date | None):
     return today.year - value.year - ((today.month, today.day) < (value.month, value.day))
 
 
+def social_links(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = []
+    if not isinstance(value, list):
+        return []
+    return [
+        {'platform': str(item['platform']), 'url': str(item['url']), 'label': str(item.get('label') or '')}
+        for item in value
+        if isinstance(item, dict) and isinstance(item.get('platform'), str) and isinstance(item.get('url'), str)
+    ][:5]
+
+
 def public_user(row):
-    birth_date = row.get('birthDate')
-    age = row.get('age')
-    result = {
+    """Projection deliberately safe to show from event lists and participant cards."""
+    return {
         'id': row['id'],
         'name': row['name'],
         'city': row.get('city') or '',
         'role': row.get('role') or 'user',
         'avatarUrl': row.get('avatarUrl'),
         'bio': row.get('bio') or '',
-        'birthDate': timestamp(birth_date),
-        'maritalStatus': row.get('maritalStatus'),
-        'childrenCount': row.get('childrenCount'),
-        'hasCar': row.get('hasCar'),
-        'workSchedule': row.get('workSchedule'),
+        'socialLinks': social_links(row.get('socialLinks')),
         'stats': {
             'events': int(row.get('eventCount') or 0),
             'subscriptions': int(row.get('subscriptionsCount') or 0),
             'followers': int(row.get('followersCount') or 0),
         },
     }
+
+
+def self_user(row):
+    """Extended projection returned only to the authenticated account owner."""
+    result = public_user(row)
+    birth_date = row.get('birthDate')
+    age = row.get('age')
+    result.update({
+        'birthDate': timestamp(birth_date),
+        'maritalStatus': row.get('maritalStatus'),
+        'childrenCount': row.get('childrenCount'),
+        'hasCar': row.get('hasCar'),
+        'workSchedule': row.get('workSchedule'),
+    })
     if age is not None:
         result['age'] = int(age)
     elif birth_date is not None:
@@ -143,7 +167,7 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
     digest = hashlib.sha256(token.encode()).hexdigest()
     user = (await session.execute(text("""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
         p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
-        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",
+        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
         CASE WHEN EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=u.id AND om.role='OWNER')
@@ -232,7 +256,7 @@ async def register(payload: Credentials, request: Request, response: Response, s
             await session.execute(text('INSERT INTO user_roles(user_id,role_id) VALUES (:user,:role) ON CONFLICT DO NOTHING'),
                                   {'user': user_id, 'role': role_id})
         token = await create_login(session, user_id)
-    result = public_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'user', 'avatarUrl': None, 'bio': ''})
+    result = self_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'user', 'avatarUrl': None, 'bio': ''})
     set_session(response, token)
     return result
 
@@ -243,7 +267,7 @@ async def login(payload: Credentials, request: Request, response: Response, sess
     await throttle_auth(payload.email, 'login', 20)
     user = (await session.execute(text('''SELECT u.id,u.public_id,u.password_hash,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
         p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
-        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",
+        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount"
         FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
@@ -259,7 +283,7 @@ async def login(payload: Credentials, request: Request, response: Response, sess
     await session.commit()
     async with session.begin():
         token = await create_login(session, user['id'])
-    result = public_user({**dict(user), 'id': user['public_id'], 'role': 'user'})
+    result = self_user({**dict(user), 'id': user['public_id'], 'role': 'user'})
     set_session(response, token)
     return result
 
@@ -279,11 +303,30 @@ async def logout(request: Request, response: Response, session: AsyncSession = D
 @app.get('/api/v1/auth/me')
 async def me(request: Request, session: AsyncSession = Depends(db_session)):
     try:
-        return public_user(await current_user(request, session))
+        return self_user(await current_user(request, session))
     except HTTPException as exc:
         if exc.status_code == 401:
             return None
         raise
+
+
+class SocialLinkInput(BaseModel):
+    platform: str = Field(min_length=1, max_length=40)
+    url: str = Field(min_length=8, max_length=500)
+    label: str | None = Field(default=None, max_length=80)
+
+    @field_validator('platform', 'label')
+    @classmethod
+    def clean_text(cls, value):
+        return value.strip() if value is not None else value
+
+    @field_validator('url')
+    @classmethod
+    def valid_link(cls, value):
+        parsed = urlsplit(value.strip())
+        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
+            raise ValueError('Social link must be an http(s) URL')
+        return value.strip()
 
 
 class ProfileInput(BaseModel):
@@ -295,6 +338,7 @@ class ProfileInput(BaseModel):
     childrenCount: int | None = Field(default=None, ge=0, le=20)
     hasCar: bool | None = None
     workSchedule: str | None = Field(default=None, max_length=255)
+    socialLinks: list[SocialLinkInput] | None = Field(default=None, max_length=5)
 
     @field_validator('name', 'city', 'bio', 'maritalStatus', 'workSchedule')
     @classmethod
@@ -315,7 +359,7 @@ class ProfileInput(BaseModel):
 async def patch_profile(payload: ProfileInput, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     values = payload.model_dump(exclude_unset=True)
     if not values:
-        return public_user(user)
+        return self_user(user)
     user_columns = {'name': 'name', 'bio': 'bio', 'city': 'city'}
     profile_columns = {
         'birthDate': 'birth_date',
@@ -323,9 +367,12 @@ async def patch_profile(payload: ProfileInput, user=Depends(require_user), sessi
         'childrenCount': 'children_count',
         'hasCar': 'has_car',
         'workSchedule': 'work_schedule',
+        'socialLinks': 'social_links',
     }
     user_values = {key: value for key, value in values.items() if key in user_columns}
     profile_values = {key: value for key, value in values.items() if key in profile_columns}
+    if 'socialLinks' in profile_values:
+        profile_values['socialLinks'] = json.dumps(profile_values['socialLinks'])
     await session.commit()
     async with session.begin():
         if user_values:
@@ -347,7 +394,7 @@ async def patch_profile(payload: ProfileInput, user=Depends(require_user), sessi
     result = {**user, **user_values, **profile_values}
     if 'birthDate' in profile_values:
         result['age'] = age_from_birth_date(profile_values['birthDate'])
-    return public_user(result)
+    return self_user(result)
 
 
 def image_extension(data: bytes):
@@ -400,7 +447,7 @@ async def avatar(request: Request, file: UploadFile = File(...), user=Depends(re
         path.unlink(missing_ok=True)
         raise
     await restart_redis_cache()
-    return public_user({**user, 'avatarUrl': f'/media/{media_id}'})
+    return self_user({**user, 'avatarUrl': f'/media/{media_id}'})
 
 
 @app.get('/media/{media_id}')
@@ -415,6 +462,25 @@ async def media(media_id: str, session: AsyncSession = Depends(db_session)):
         raise HTTPException(404, 'Media not found')
     return FileResponse(path, media_type=item['content_type'], headers={'X-Content-Type-Options': 'nosniff'})
 
+
+async def find_public_user(session: AsyncSession, public_id: str):
+    user = (await session.execute(text('''SELECT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,
+        u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,p.social_links AS "socialLinks",
+        (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
+        CASE WHEN EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=u.id AND om.role='OWNER')
+          THEN 'organization' ELSE 'user' END AS role
+        FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
+        WHERE u.public_id=:id AND u.status='ACTIVE' '''), {'id': public_id})).mappings().first()
+    if not user:
+        raise HTTPException(404, 'User not found')
+    return public_user(dict(user))
+
+
+@app.get('/api/v1/users/{user_id}')
+async def user_profile(user_id: str, session: AsyncSession = Depends(db_session)):
+    return await find_public_user(session, user_id)
+
+
 async def event_rows(session, city: str | None, public_only=True):
     where = "e.status='PUBLISHED'" if public_only else 'TRUE'
     params = {}
@@ -426,6 +492,7 @@ async def event_rows(session, city: str | None, public_only=True):
       COALESCE(e.location,'') AS address,e.district,e.city,e.start_at AS "startsAt",e.price,e.capacity,
       e.join_mode AS "joinMode",CASE WHEN e.status='PUBLISHED' THEN 'published' ELSE 'unpublished' END AS status,e.level,
       e.min_age AS "minAge",e.image_url AS "imageUrl",e.rating,e.event_type AS "eventType",
+      e.latitude::float AS latitude,e.longitude::float AS longitude,
       (SELECT count(*) FROM event_registrations r WHERE r.event_id=e.id AND r.status='REGISTERED') AS "confirmedCount"
       FROM events e JOIN sports s ON s.id=e.sport_id JOIN users u ON u.id=e.organizer_id
       LEFT JOIN organizations o ON o.id=e.organization_id WHERE {where} ORDER BY e.start_at,e.id''', params)
@@ -436,19 +503,38 @@ async def event_rows(session, city: str | None, public_only=True):
     return events
 
 
+async def notification_rows(session: AsyncSession, user_id: int):
+    items = await rows(session, '''SELECT 'n-' || n.id AS id,n.type,n.title,n.message AS body,n.is_read AS "isRead",
+       n.created_at AS "createdAt",e.public_id AS "eventId",s.name AS "eventTag",e.start_at AS "eventStart"
+       FROM notifications n LEFT JOIN events e ON e.id=n.event_id LEFT JOIN sports s ON s.id=e.sport_id
+       WHERE n.user_id=:user AND n.dismissed_at IS NULL ORDER BY n.created_at DESC,n.id DESC''', {'user': user_id})
+    for item in items:
+        item['createdAt'] = timestamp(item['createdAt'])
+        if item.get('eventStart'):
+            item['eventDate'] = timestamp(item.pop('eventStart'))
+        else:
+            item.pop('eventStart', None)
+        if item.get('eventId'):
+            item['linkUrl'] = f"/events/{item['eventId']}"
+            item['linkText'] = 'Открыть событие'
+        item.pop('eventId', None)
+    return items
+
+
 async def build_state(session: AsyncSession, city: str | None, user: dict | None):
     selected_city = (city or settings.default_city or '').strip()
     # A missing city must not leak an unfiltered nationwide feed.
     events = await event_rows(session, selected_city) if selected_city else []
     event_ids = [e['id'] for e in events]
     if not event_ids:
+        notifications = await notification_rows(session, user['db_id']) if user else []
         return dict(version=1, currentUserId=user['id'] if user else None, accounts=[], city=selected_city,
                     users=[public_user(user)] if user else [], organizations=[], sports=[], events=[], participations=[],
-                    comments=[], notifications=[], favorites=[], likedEvents=[])
+                    comments=[], notifications=notifications, favorites=[], likedEvents=[])
     params = {'ids': event_ids, 'user_id': user['db_id'] if user else -1}
     users = await rows(session, '''SELECT DISTINCT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,
        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
-       p.has_car AS "hasCar",p.work_schedule AS "workSchedule",
+       p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
        (SELECT count(*)::integer FROM events owner_events WHERE owner_events.organizer_id=u.id) AS "eventCount",
        CASE WHEN EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=u.id AND om.role='OWNER') THEN 'organization' ELSE 'user' END AS role
@@ -470,7 +556,9 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
     for comment in comments: comment['createdAt'] = timestamp(comment['createdAt'])
     participations = []
     favorites, liked = [], []
+    notifications = []
     if user:
+        notifications = await notification_rows(session, user['db_id'])
         participations = await rows(session, '''SELECT 'part-' || r.id AS id,e.public_id AS "eventId",u.public_id AS "userId",
            CASE r.status WHEN 'REGISTERED' THEN 'confirmed' WHEN 'PENDING' THEN 'pending' ELSE 'rejected' END AS status,r.registered_at AS "createdAt"
            FROM event_registrations r JOIN events e ON e.id=r.event_id JOIN users u ON u.id=r.user_id
@@ -482,7 +570,7 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
             WHERE f.user_id=:user_id AND e.public_id=ANY(:ids)''', params)]
     return dict(version=1, currentUserId=user['id'] if user else None, accounts=[], city=selected_city,
                 users=[public_user(u) for u in users], organizations=[{**org, 'sports': []} for org in organizations],
-                sports=sports, events=events, participations=participations, comments=comments, notifications=[],
+                sports=sports, events=events, participations=participations, comments=comments, notifications=notifications,
                 favorites=favorites, likedEvents=liked)
 
 
@@ -530,6 +618,33 @@ async def event(event_id: str, session: AsyncSession = Depends(db_session)):
     return item
 
 
+@app.get('/api/v1/events/{event_id}/participants')
+async def event_participants(event_id: str, session: AsyncSession = Depends(db_session)):
+    participants = await rows(session, '''SELECT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,
+        u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,p.social_links AS "socialLinks",
+        (SELECT count(*)::integer FROM events owner_events WHERE owner_events.organizer_id=u.id) AS "eventCount",
+        'user' AS role
+        FROM event_registrations r JOIN events e ON e.id=r.event_id JOIN users u ON u.id=r.user_id
+        LEFT JOIN user_profiles p ON p.user_id=u.id
+        WHERE e.public_id=:event AND e.status='PUBLISHED' AND r.status='REGISTERED' AND u.status='ACTIVE'
+        ORDER BY r.registered_at,u.id''', {'event': event_id})
+    return [public_user(participant) for participant in participants]
+
+
+@app.patch('/api/v1/notifications/{notification_id}/dismiss', status_code=status.HTTP_204_NO_CONTENT)
+async def dismiss_notification(notification_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    if not notification_id.startswith('n-') or not notification_id[2:].isdigit():
+        raise HTTPException(404, 'Notification not found')
+    await session.commit()
+    async with session.begin():
+        updated = await session.scalar(text('''UPDATE notifications SET dismissed_at=now()
+            WHERE id=:id AND user_id=:user AND dismissed_at IS NULL RETURNING id'''),
+            {'id': int(notification_id[2:]), 'user': user['db_id']})
+        if updated is None:
+            raise HTTPException(404, 'Notification not found')
+    await restart_redis_cache()
+
+
 class EventInput(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(default='', max_length=10000)
@@ -543,6 +658,9 @@ class EventInput(BaseModel):
     level: int = Field(ge=1, le=5)
     sportName: str = Field(min_length=1, max_length=100)
     minAge: int | None = Field(default=None, ge=0, le=120)
+    eventType: str = Field(default='game', pattern='^(game|training|tournament)$')
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
 
     @field_validator('title', 'address', 'sportName')
     @classmethod
@@ -554,9 +672,11 @@ class EventInput(BaseModel):
 
 @app.post('/api/v1/events', status_code=status.HTTP_201_CREATED)
 async def create_event(payload: EventInput, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
-    if payload.startsAt.tzinfo is None: raise HTTPException(422, 'startsAt must include a timezone')
+    if payload.startsAt.tzinfo is None:
+        raise HTTPException(422, 'startsAt must include a timezone')
     city = (payload.city or user.get('city') or '').strip()
-    if not city: raise HTTPException(422, 'city is required')
+    if not city:
+        raise HTTPException(422, 'city is required')
     await session.commit()
     async with session.begin():
         sport = await session.scalar(text('SELECT id FROM sports WHERE lower(name)=lower(:name)'), {'name': payload.sportName})
@@ -564,12 +684,29 @@ async def create_event(payload: EventInput, user=Depends(require_user), session:
             sport = await session.scalar(text('INSERT INTO sports(public_id,name,slug) VALUES (:id,:name,:slug) RETURNING id'),
                 {'id': 'sp-' + uuid4().hex[:12], 'name': payload.sportName, 'slug': 'sport-' + uuid4().hex[:12]})
         event_id = 'ev-' + uuid4().hex[:12]
-        await session.execute(text('''INSERT INTO events(public_id,organizer_id,sport_id,title,description,event_type,location,district,city,start_at,
-             capacity,price,join_mode,level,min_age,image_url,status,published_at) VALUES
-             (:id,:user,:sport,:title,:description,'game',:address,:district,:city,:starts,:capacity,:price,:mode,:level,:age,NULL,'PUBLISHED',now())'''),
+        event_db_id = await session.scalar(text('''INSERT INTO events(public_id,organizer_id,sport_id,title,description,event_type,location,district,city,start_at,
+             capacity,price,join_mode,level,min_age,latitude,longitude,image_url,status,published_at) VALUES
+             (:id,:user,:sport,:title,:description,:type,:address,:district,:city,:starts,:capacity,:price,:mode,:level,:age,:latitude,:longitude,NULL,'PUBLISHED',now())
+             RETURNING id'''),
              {'id': event_id, 'user': user['db_id'], 'sport': sport, 'title': payload.title, 'description': payload.description.strip(),
-              'address': payload.address, 'district': payload.district, 'city': city, 'starts': payload.startsAt, 'capacity': payload.capacity,
-              'price': payload.price, 'mode': payload.joinMode, 'level': payload.level, 'age': payload.minAge})
+              'type': payload.eventType, 'address': payload.address, 'district': payload.district, 'city': city, 'starts': payload.startsAt,
+              'capacity': payload.capacity, 'price': payload.price, 'mode': payload.joinMode, 'level': payload.level, 'age': payload.minAge,
+              'latitude': payload.latitude, 'longitude': payload.longitude})
+        if payload.eventType == 'tournament':
+            # A sport specialization is inferred from prior event participation or organizing.
+            # This avoids notifying unrelated athletes while keeping the MVP schema compact.
+            recipients = await rows(session, '''SELECT DISTINCT candidate.user_id FROM (
+                SELECT e.organizer_id AS user_id FROM events e WHERE e.sport_id=:sport
+                UNION
+                SELECT r.user_id FROM event_registrations r JOIN events e ON e.id=r.event_id WHERE e.sport_id=:sport AND r.status='REGISTERED'
+            ) candidate WHERE candidate.user_id <> :organizer''', {'sport': sport, 'organizer': user['db_id']})
+            for recipient in recipients:
+                await session.execute(text('''INSERT INTO notifications(user_id,event_id,type,title,message)
+                    VALUES (:user,:event,'tournament_invitation',:title,:message)'''), {
+                    'user': recipient['user_id'], 'event': event_db_id,
+                    'title': f'Новый турнир: {payload.title}',
+                    'message': f'Открыта регистрация на турнир по {payload.sportName}.',
+                })
     await restart_redis_cache()
     return {'id': event_id}
 
@@ -583,7 +720,7 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
         raise HTTPException(422, 'city is required')
     await session.commit()
     async with session.begin():
-        event = (await session.execute(text('SELECT id,organizer_id FROM events WHERE public_id=:id FOR UPDATE'),
+        event = (await session.execute(text('SELECT id,organizer_id,event_type FROM events WHERE public_id=:id FOR UPDATE'),
                                        {'id': event_id})).mappings().first()
         if not event:
             raise HTTPException(404, 'Event not found')
@@ -598,14 +735,29 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
         if sport is None:
             sport = await session.scalar(text('INSERT INTO sports(public_id,name,slug) VALUES (:id,:name,:slug) RETURNING id'),
                 {'id': 'sp-' + uuid4().hex[:12], 'name': payload.sportName, 'slug': 'sport-' + uuid4().hex[:12]})
-        await session.execute(text('''UPDATE events SET sport_id=:sport,title=:title,description=:description,
-           location=:address,district=:district,city=:city,start_at=:starts,capacity=:capacity,
+        await session.execute(text('''UPDATE events SET sport_id=:sport,title=:title,description=:description,event_type=:type,
+           location=:address,district=:district,city=:city,latitude=:latitude,longitude=:longitude,start_at=:starts,capacity=:capacity,
            price=:price,join_mode=:mode,level=:level,min_age=:age,updated_at=now() WHERE id=:id'''), {
             'id': event['id'], 'sport': sport, 'title': payload.title, 'description': payload.description.strip(),
-            'address': payload.address, 'district': payload.district, 'city': city, 'starts': payload.startsAt,
+            'type': payload.eventType, 'address': payload.address, 'district': payload.district, 'city': city,
+            'latitude': payload.latitude, 'longitude': payload.longitude, 'starts': payload.startsAt,
             'capacity': payload.capacity, 'price': payload.price, 'mode': payload.joinMode,
             'level': payload.level, 'age': payload.minAge,
         })
+        if payload.eventType == 'tournament' and event['event_type'] != 'tournament':
+            recipients = await rows(session, '''SELECT DISTINCT candidate.user_id FROM (
+                SELECT e.organizer_id AS user_id FROM events e WHERE e.sport_id=:sport
+                UNION
+                SELECT r.user_id FROM event_registrations r JOIN events e ON e.id=r.event_id
+                  WHERE e.sport_id=:sport AND r.status='REGISTERED'
+            ) candidate WHERE candidate.user_id <> :organizer''', {'sport': sport, 'organizer': user['db_id']})
+            for recipient in recipients:
+                await session.execute(text('''INSERT INTO notifications(user_id,event_id,type,title,message)
+                    VALUES (:user,:event,'tournament_invitation',:title,:message)'''), {
+                    'user': recipient['user_id'], 'event': event['id'],
+                    'title': f'Новый турнир: {payload.title}',
+                    'message': f'Открыта регистрация на турнир по {payload.sportName}.',
+                })
     await restart_redis_cache()
     return {'id': event_id}
 
@@ -654,10 +806,17 @@ async def get_comments(event_id: str, session: AsyncSession = Depends(db_session
 async def add_comment(event_id: str, payload: CommentInput, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     await session.commit()
     async with session.begin():
-        event_db_id = await session.scalar(text("SELECT id FROM events WHERE public_id=:id AND status='PUBLISHED'"), {'id': event_id})
-        if not event_db_id: raise HTTPException(404, 'Published event not found')
+        event = (await session.execute(text('''SELECT e.id,e.organizer_id FROM events e
+            WHERE e.public_id=:id AND e.status='PUBLISHED' FOR SHARE'''), {'id': event_id})).mappings().first()
+        if not event:
+            raise HTTPException(404, 'Published event not found')
+        is_participant = await session.scalar(text('''SELECT 1 FROM event_registrations
+            WHERE event_id=:event AND user_id=:user AND status='REGISTERED' '''),
+            {'event': event['id'], 'user': user['db_id']})
+        if event['organizer_id'] != user['db_id'] and not is_participant:
+            raise HTTPException(403, 'Only the organizer and confirmed participants can write in this event chat')
         comment_id = await session.scalar(text('INSERT INTO event_comments(event_id,user_id,text) VALUES (:event,:user,:text) RETURNING id'),
-                                                {'event': event_db_id, 'user': user['db_id'], 'text': payload.text})
+                                                {'event': event['id'], 'user': user['db_id'], 'text': payload.text})
     await restart_redis_cache()
     return {'id': f'c-{comment_id}', 'created': True}
 
@@ -700,6 +859,71 @@ async def toggle(event_id: str, kind: str, user=Depends(require_user), session: 
 class ReverseGeoInput(BaseModel):
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+
+
+@app.get('/api/v1/geo/suggest')
+async def suggest_addresses(query: str, city: str | None = None):
+    """Return a small, Redis-cached set of Nominatim address choices for an event."""
+    query = query.strip()
+    city = (city or '').strip()
+    if len(query) < 3:
+        return []
+    if len(query) > 180 or len(city) > 150:
+        raise HTTPException(422, 'Address query is too long')
+    if not settings.geo_contact_email:
+        raise HTTPException(503, 'Geocoder contact is not configured; enter the address manually')
+    lookup = f'{query}, {city}' if city and city.casefold() not in query.casefold() else query
+    cache_key = 'geo:suggest:v1:' + hashlib.sha256(lookup.casefold().encode()).hexdigest()
+    try:
+        cached = await redis.get(cache_key)
+        if cached is not None:
+            return json.loads(cached)
+    except (RedisError, ValueError):
+        logger.info('Address suggestion cache unavailable; querying Nominatim directly')
+    global _geo_last_request
+    try:
+        # Do not allow anonymous distinct queries to form an unbounded queue
+        # behind Nominatim's required one-request-per-second throttle.
+        await asyncio.wait_for(_geo_lock.acquire(), timeout=0.1)
+    except TimeoutError:
+        raise HTTPException(429, 'Address suggestions are busy; try again in a moment')
+    try:
+        delay = 1 - (time.monotonic() - _geo_last_request)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        _geo_last_request = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=settings.geo_timeout_seconds, headers={'User-Agent': settings.geo_user_agent}) as client:
+                response = await client.get(settings.geo_search_url, params={
+                    'q': lookup, 'format': 'jsonv2', 'addressdetails': 1, 'limit': 5,
+                    'email': settings.geo_contact_email,
+                })
+                response.raise_for_status()
+                raw_items = response.json()
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(503, 'Unable to suggest addresses; enter the address manually')
+    finally:
+        _geo_lock.release()
+    suggestions = []
+    for item in raw_items if isinstance(raw_items, list) else []:
+        address = item.get('address') if isinstance(item, dict) else None
+        if not isinstance(address, dict):
+            continue
+        try:
+            latitude, longitude = float(item['lat']), float(item['lon'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        selected_city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality') or city
+        district = address.get('city_district') or address.get('district') or address.get('borough') or address.get('suburb') or ''
+        label = str(item.get('display_name') or '').strip()
+        if label:
+            suggestions.append({'label': label, 'address': label[:255], 'city': str(selected_city or '')[:150],
+                                'district': str(district or '')[:100], 'latitude': latitude, 'longitude': longitude})
+    try:
+        await redis.set(cache_key, json.dumps(suggestions, ensure_ascii=False), ex=600)
+    except RedisError:
+        logger.info('Address suggestions were not cached')
+    return suggestions
 
 
 @app.post('/api/v1/geo/reverse')

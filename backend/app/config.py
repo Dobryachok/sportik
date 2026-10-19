@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     upload_dir: Path = Path('/data/avatars')
     max_avatar_bytes: int = 5 * 1024 * 1024
     geo_url: str = 'https://nominatim.openstreetmap.org/reverse'
+    geo_search_url: str = 'https://nominatim.openstreetmap.org/search'
     geo_contact_email: str = ''
     geo_user_agent: str = 'SportVmeste/1.0'
     geo_timeout_seconds: float = 5

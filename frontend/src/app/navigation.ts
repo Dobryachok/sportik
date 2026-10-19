@@ -1,4 +1,4 @@
-import { Bell, CalendarCheck, CircleCheck, User } from 'lucide-react'
+import { Bell, CalendarCheck, CircleCheck, Trophy, User } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 export interface NavItem {
@@ -21,6 +21,13 @@ export const navItems: NavItem[] = [
       p.startsWith('/events') ||
       p.startsWith('/create-event') ||
       p.startsWith('/sport'),
+  },
+  {
+    to: '/tournaments',
+    label: 'Турниры',
+    shortLabel: 'Турниры',
+    icon: Trophy,
+    match: (p) => p === '/tournaments',
   },
   {
     to: '/notifications',

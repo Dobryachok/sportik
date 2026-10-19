@@ -51,6 +51,7 @@ export function EventCard({
                 {sport.name}
               </span>
             )}
+            {event.eventType === 'tournament' && <span className="rounded-full border border-warning/70 px-2.5 py-1 text-[11px] font-semibold text-warning">Турнир</span>}
             {event.district && (
               <span className="rounded-full border border-white/15 px-2.5 py-1 text-[11px] font-medium text-white/70">
                 {event.district}

@@ -1,8 +1,9 @@
-import { ArrowLeft, Camera, LogOut, MapPin, Pencil } from 'lucide-react'
+import { ArrowLeft, Camera, Link2, LogOut, MapPin, Pencil, Plus, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { PrimaryButton } from '../components/PrimaryButton'
+import type { SocialLink } from '../data/types'
 
 const maritalOptions = [
   { value: '', label: 'Не выбрано' },
@@ -32,6 +33,7 @@ export function ProfilePage() {
     currentUser?.hasCar === null || currentUser?.hasCar === undefined ? '' : currentUser.hasCar ? 'yes' : 'no',
   )
   const [workSchedule, setWorkSchedule] = useState(currentUser?.workSchedule ?? '')
+  const [socialLinks, setSocialLinks] = useState<SocialLink[]>(currentUser?.socialLinks ?? [])
   const [busy, setBusy] = useState(false)
 
   if (!currentUser) return null
@@ -45,6 +47,7 @@ export function ProfilePage() {
     setChildrenCount(currentUser.childrenCount === null || currentUser.childrenCount === undefined ? '' : String(currentUser.childrenCount))
     setHasCar(currentUser.hasCar === null || currentUser.hasCar === undefined ? '' : currentUser.hasCar ? 'yes' : 'no')
     setWorkSchedule(currentUser.workSchedule ?? '')
+    setSocialLinks(currentUser.socialLinks ?? [])
   }
 
   const openEditing = () => {
@@ -64,6 +67,9 @@ export function ProfilePage() {
       childrenCount: childrenCount === '' ? null : Number(childrenCount),
       hasCar: hasCar === '' ? null : hasCar === 'yes',
       workSchedule: workSchedule || null,
+      socialLinks: socialLinks
+        .map((item) => ({ platform: item.platform.trim(), label: item.label?.trim() || '', url: item.url.trim() }))
+        .filter((item) => item.platform && item.url),
     })
     if (saved) setEditing(false)
     setBusy(false)
@@ -72,6 +78,14 @@ export function ProfilePage() {
   const avatar = async (file?: File) => {
     if (file) await changeAvatar(file)
   }
+
+  const updateSocialLink = (index: number, field: keyof SocialLink, value: string) => {
+    setSocialLinks((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item))
+  }
+  const addSocialLink = () => {
+    if (socialLinks.length < 5) setSocialLinks((items) => [...items, { platform: '', label: '', url: '' }])
+  }
+  const removeSocialLink = (index: number) => setSocialLinks((items) => items.filter((_, itemIndex) => itemIndex !== index))
 
   const stats = currentUser.stats ?? { events: 0, subscriptions: 0, followers: 0 }
   const infoRows = [
@@ -230,6 +244,23 @@ export function ProfilePage() {
               О себе
               <textarea rows={4} value={bio} onChange={(event) => setBio(event.target.value)} className="mt-1.5 w-full resize-y rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent" />
             </label>
+            <section className="rounded-xl border border-white/10 bg-bg/50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div><h3 className="font-semibold text-white">Социальные сети</h3><p className="mt-0.5 text-xs text-muted">До пяти ссылок, которые будут видны в профиле.</p></div>
+                <button type="button" onClick={addSocialLink} disabled={socialLinks.length >= 5} className="inline-flex items-center gap-1 text-sm font-semibold text-accent disabled:text-muted"><Plus size={16} /> Добавить</button>
+              </div>
+              <div className="mt-3 space-y-3">
+                {socialLinks.map((item, index) => (
+                  <div key={index} className="relative grid gap-2 rounded-lg border border-white/[0.08] p-2.5 sm:grid-cols-2">
+                    <label className="text-xs text-muted">Сеть<input required value={item.platform} onChange={(event) => updateSocialLink(index, 'platform', event.target.value)} placeholder="Telegram" className="mt-1 w-full rounded-lg border border-white/10 bg-card px-2.5 py-2 text-sm text-white outline-none focus:border-accent" /></label>
+                    <label className="pr-8 text-xs text-muted">Название (необязательно)<input value={item.label ?? ''} onChange={(event) => updateSocialLink(index, 'label', event.target.value)} placeholder="@nickname" className="mt-1 w-full rounded-lg border border-white/10 bg-card px-2.5 py-2 text-sm text-white outline-none focus:border-accent" /></label>
+                    <label className="sm:col-span-2 text-xs text-muted">Ссылка<input required type="url" value={item.url} onChange={(event) => updateSocialLink(index, 'url', event.target.value)} placeholder="https://…" className="mt-1 w-full rounded-lg border border-white/10 bg-card px-2.5 py-2 text-sm text-white outline-none focus:border-accent" /></label>
+                    <button type="button" onClick={() => removeSocialLink(index)} aria-label="Удалить ссылку" className="absolute right-2 top-2 rounded-md p-1.5 text-muted hover:bg-white/10 hover:text-white"><X size={15} /></button>
+                  </div>
+                ))}
+              </div>
+              {socialLinks.length === 0 && <button type="button" onClick={addSocialLink} className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-accent"><Link2 size={16} /> Добавить соцсеть</button>}
+            </section>
             {error && <p role="alert" className="rounded-xl bg-warning/10 px-3 py-2 text-sm text-warning">{error}</p>}
             <PrimaryButton type="submit" fullWidth disabled={busy}>{busy ? 'Сохраняем…' : 'Сохранить профиль'}</PrimaryButton>
           </div>
@@ -253,6 +284,14 @@ export function ProfilePage() {
               <button type="button" onClick={openEditing} className="text-sm font-semibold text-accent">Изменить</button>
             </div>
             <p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted">{currentUser.bio || 'Добавьте немного информации о себе.'}</p>
+          </section>
+          <section className="px-1 py-5">
+            <div className="flex items-center justify-between gap-4"><h2 className="text-xl font-bold">Социальные сети</h2><button type="button" onClick={openEditing} className="inline-flex items-center gap-1 text-sm font-semibold text-accent"><Plus size={16} /> Добавить соцсеть</button></div>
+            {currentUser.socialLinks?.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {currentUser.socialLinks.map((item) => <a key={`${item.platform}:${item.url}`} href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-card px-3 py-2 text-sm font-semibold text-white transition-colors hover:border-accent"><Link2 size={15} className="text-accent" />{item.label || item.platform}</a>)}
+              </div>
+            ) : <p className="mt-2 text-sm text-muted">Добавьте ссылки, чтобы участникам было проще связаться с вами.</p>}
           </section>
         </>
       )}
