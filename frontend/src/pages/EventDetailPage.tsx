@@ -62,7 +62,6 @@ export function EventDetailPage() {
   const pending = state.participations.filter((item) => item.eventId === event.id && item.status === 'pending')
   const liked = state.likedEvents.includes(event.id)
   const { date, time } = formatEventDate(event.startsAt)
-  const price = event.discountedPrice ?? event.price
   const mapHref = event.latitude != null && event.longitude != null
     ? `https://yandex.ru/maps/?pt=${event.longitude},${event.latitude}&z=16&l=map`
     : `https://yandex.ru/maps/?text=${encodeURIComponent([event.city, event.address].filter(Boolean).join(', '))}`
@@ -135,18 +134,12 @@ export function EventDetailPage() {
       </div>
 
       <div className="pt-6 md:pt-1">
-        <div className="flex items-start justify-between gap-4 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-muted">Место встречи</p>
-            <p className="mt-1 flex items-start gap-2 text-sm font-semibold leading-snug text-white">
-              <MapPin size={17} className="mt-0.5 shrink-0 text-accent" />
-              <span>{event.address}</span>
-            </p>
-          </div>
-          <div className="shrink-0 text-right">
-            <p className="text-xs text-muted">Участие</p>
-            <p className="mt-1 text-base font-bold text-white">{price === 0 ? 'Бесплатно' : `${price} ₽`}</p>
-          </div>
+        <div className="rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
+          <p className="text-xs font-semibold text-muted">Место встречи</p>
+          <p className="mt-1 flex items-start gap-2 text-sm font-semibold leading-snug text-white">
+            <MapPin size={17} className="mt-0.5 shrink-0 text-accent" />
+            <span>{event.address}</span>
+          </p>
         </div>
 
         {unpublished && (
@@ -156,10 +149,7 @@ export function EventDetailPage() {
         )}
 
         <section className="mt-7">
-          <div className="flex items-center justify-between gap-4">
-            <h2 className="text-xl font-bold tracking-[-0.025em]">О событии</h2>
-            <StarRating value={event.rating} />
-          </div>
+          <h2 className="text-xl font-bold tracking-[-0.025em]">О событии</h2>
           <p className="mt-3 whitespace-pre-line text-sm leading-6 text-white/85">{event.description}</p>
           <button type="button" className="mt-3 text-sm font-semibold text-accent">Показать всё</button>
         </section>

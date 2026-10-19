@@ -21,8 +21,17 @@ def test_auth_and_private_write_contracts_are_published():
 @pytest.mark.parametrize('field', ['title', 'address', 'sportName'])
 def test_whitespace_event_fields_are_not_accepted(field):
     payload = dict(title='Run', address='Park', sportName='Running', city='Krasnoyarsk',
-                   startsAt=datetime.now(timezone.utc), price=0, capacity=10, joinMode='open', level=1)
+                   startsAt=datetime.now(timezone.utc), capacity=10, joinMode='open', level=1)
     payload[field] = '   '
+    with pytest.raises(ValidationError):
+        EventInput(**payload)
+
+
+def test_event_level_accepts_half_stars_and_rejects_other_fractions():
+    payload = dict(title='Run', address='Park', sportName='Running', city='Krasnoyarsk',
+                   startsAt=datetime.now(timezone.utc), capacity=10, joinMode='open', level=3.5)
+    assert EventInput(**payload).level == 3.5
+    payload['level'] = 3.25
     with pytest.raises(ValidationError):
         EventInput(**payload)
 
@@ -53,10 +62,16 @@ def test_csrf_origin_is_an_async_guard():
     assert callable(csrf_origin)
 
 
-def test_auth_migration_keeps_seed_roles_and_removes_only_known_demo_users():
+def test_auth_migration_is_additive_for_existing_data():
     migration = (Path(__file__).parents[1] / 'migrations' / 'versions' / '0002_auth_and_clean_demo.py').read_text(encoding='utf8')
-    assert "DELETE FROM users WHERE public_id IN ('u-demo', 'u-anya', 'u-vitya')" in migration
     assert 'CREATE TABLE auth_sessions' in migration
     assert 'token_hash CHAR(64) NOT NULL UNIQUE' in migration
-    assert 'Database contains non-demo content' in migration
-    assert "DELETE FROM events WHERE public_id IN ('ev-tsimlyanskaya', 'ev-run', 'ev-chess')" in migration
+    assert 'DELETE FROM users' not in migration
+    assert 'DELETE FROM events' not in migration
+
+
+def test_half_star_migration_is_non_destructive():
+    migration = (Path(__file__).parents[1] / 'migrations' / 'versions' / '0005_half_star_levels.py').read_text(encoding='utf8')
+    assert 'NUMERIC(2,1)' in migration
+    assert 'DROP TABLE' not in migration
+    assert 'TRUNCATE' not in migration

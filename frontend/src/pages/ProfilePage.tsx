@@ -26,9 +26,6 @@ export function ProfilePage() {
   const [profileCity, setProfileCity] = useState(currentUser?.city || city)
   const [birthDate, setBirthDate] = useState(currentUser?.birthDate?.slice(0, 10) ?? '')
   const [maritalStatus, setMaritalStatus] = useState(currentUser?.maritalStatus ?? '')
-  const [childrenCount, setChildrenCount] = useState(
-    currentUser?.childrenCount === null || currentUser?.childrenCount === undefined ? '' : String(currentUser.childrenCount),
-  )
   const [hasCar, setHasCar] = useState(
     currentUser?.hasCar === null || currentUser?.hasCar === undefined ? '' : currentUser.hasCar ? 'yes' : 'no',
   )
@@ -44,7 +41,6 @@ export function ProfilePage() {
     setProfileCity(currentUser.city || city)
     setBirthDate(currentUser.birthDate?.slice(0, 10) ?? '')
     setMaritalStatus(currentUser.maritalStatus ?? '')
-    setChildrenCount(currentUser.childrenCount === null || currentUser.childrenCount === undefined ? '' : String(currentUser.childrenCount))
     setHasCar(currentUser.hasCar === null || currentUser.hasCar === undefined ? '' : currentUser.hasCar ? 'yes' : 'no')
     setWorkSchedule(currentUser.workSchedule ?? '')
     setSocialLinks(currentUser.socialLinks ?? [])
@@ -64,7 +60,6 @@ export function ProfilePage() {
       city: profileCity,
       birthDate: birthDate || null,
       maritalStatus: maritalStatus || null,
-      childrenCount: childrenCount === '' ? null : Number(childrenCount),
       hasCar: hasCar === '' ? null : hasCar === 'yes',
       workSchedule: workSchedule || null,
       socialLinks: socialLinks
@@ -90,12 +85,6 @@ export function ProfilePage() {
   const stats = currentUser.stats ?? { events: 0, subscriptions: 0, followers: 0 }
   const infoRows = [
     { label: 'Семейное положение', value: optionalValue(currentUser.maritalStatus) },
-    {
-      label: 'Дети',
-      value: currentUser.childrenCount === null || currentUser.childrenCount === undefined
-        ? 'Не выбрано'
-        : currentUser.childrenCount === 0 ? 'Нет' : `${currentUser.childrenCount}`,
-    },
     {
       label: 'Автомобиль',
       value: currentUser.hasCar === null || currentUser.hasCar === undefined
@@ -219,23 +208,14 @@ export function ProfilePage() {
                 {maritalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block text-sm font-medium text-white/85">
-                Дети
-                <select value={childrenCount} onChange={(event) => setChildrenCount(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent">
-                  <option value="">Не выбрано</option>
-                  {[0, 1, 2, 3, 4, 5].map((count) => <option key={count} value={count}>{count === 0 ? 'Нет' : count}</option>)}
-                </select>
-              </label>
-              <label className="block text-sm font-medium text-white/85">
-                Автомобиль
-                <select value={hasCar} onChange={(event) => setHasCar(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent">
-                  <option value="">Не выбрано</option>
-                  <option value="yes">Есть</option>
-                  <option value="no">Нет</option>
-                </select>
-              </label>
-            </div>
+            <label className="block text-sm font-medium text-white/85">
+              Автомобиль
+              <select value={hasCar} onChange={(event) => setHasCar(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent">
+                <option value="">Не выбрано</option>
+                <option value="yes">Есть</option>
+                <option value="no">Нет</option>
+              </select>
+            </label>
             <label className="block text-sm font-medium text-white/85">
               График работы
               <input value={workSchedule} onChange={(event) => setWorkSchedule(event.target.value)} placeholder="Например, 5/2" className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent" />

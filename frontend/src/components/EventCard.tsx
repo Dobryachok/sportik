@@ -20,7 +20,6 @@ export function EventCard({
   showTimeline = true,
 }: EventCardProps) {
   const { date, day, time } = formatEventDate(event.startsAt)
-  const price = event.discountedPrice ?? event.price
 
   return (
     <div className="flex min-w-0 max-w-full gap-3 sm:gap-4">
@@ -39,11 +38,10 @@ export function EventCard({
       >
         <span className="absolute bottom-4 left-0 top-4 w-1 rounded-r-full bg-accent-line" />
         <div className="pl-2.5">
-          <div className="mb-3 flex items-start justify-between gap-2 md:hidden">
+          <div className="mb-3 flex items-start gap-2 md:hidden">
             <span className="rounded-lg bg-white/[0.07] px-2 py-1 text-[11px] font-medium text-white/80">
               {date} · {day} · {time}
             </span>
-            <span className="shrink-0 text-sm font-bold text-white">{price === 0 ? 'Бесплатно' : `${price} ₽`}</span>
           </div>
           <div className="mb-3 flex flex-wrap gap-1.5">
             {sport && (
@@ -69,21 +67,11 @@ export function EventCard({
                 {participantCount} из {event.capacity} чел.
               </span>
             </div>
-            <div className="hidden items-center gap-3 md:flex">
-              <div className="flex items-baseline gap-2">
-                {event.discountedPrice != null && (
-                  <span className="text-xs text-muted line-through decoration-warning">
-                    {event.price} ₽
-                  </span>
-                )}
-                <span className={`text-base font-bold ${event.discountedPrice != null ? 'text-warning' : 'text-white'}`}>
-                  {price === 0 ? 'Бесплатно' : `${price} ₽`}
-                </span>
-              </div>
-              <StarRating value={event.rating} />
+            <div className="hidden items-center md:flex">
+              <StarRating value={event.level} />
             </div>
             <div className="md:hidden">
-              <StarRating value={event.rating} />
+              <StarRating value={event.level} />
             </div>
           </div>
         </div>

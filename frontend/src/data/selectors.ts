@@ -7,7 +7,6 @@ export interface CreateEventInput {
   district?: string
   city?: string
   startsAt: string
-  price: number
   capacity: number
   joinMode: 'open' | 'application'
   level: number

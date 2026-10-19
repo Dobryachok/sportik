@@ -25,7 +25,6 @@ export interface User {
   socialLinks?: SocialLink[]
   birthDate?: string | null
   maritalStatus?: string | null
-  childrenCount?: number | null
   hasCar?: boolean | null
   workSchedule?: string | null
   stats?: { events: number; subscriptions: number; followers: number }
@@ -59,8 +58,6 @@ export interface Event {
   district?: string
   city: string
   startsAt: string
-  price: number
-  discountedPrice?: number
   capacity: number
   confirmedCount?: number
   joinMode: JoinMode

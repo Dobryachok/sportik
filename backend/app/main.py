@@ -121,7 +121,6 @@ def self_user(row):
     result.update({
         'birthDate': timestamp(birth_date),
         'maritalStatus': row.get('maritalStatus'),
-        'childrenCount': row.get('childrenCount'),
         'hasCar': row.get('hasCar'),
         'workSchedule': row.get('workSchedule'),
     })
@@ -166,7 +165,7 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, 'Authentication required')
     digest = hashlib.sha256(token.encode()).hexdigest()
     user = (await session.execute(text("""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
-        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
+        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
         p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
@@ -266,7 +265,7 @@ async def login(payload: Credentials, request: Request, response: Response, sess
     # Login is public: there is no cookie-authenticated state to protect yet.
     await throttle_auth(payload.email, 'login', 20)
     user = (await session.execute(text('''SELECT u.id,u.public_id,u.password_hash,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
-        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
+        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
         p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount"
@@ -335,7 +334,6 @@ class ProfileInput(BaseModel):
     city: str | None = Field(default=None, max_length=150)
     birthDate: date | None = None
     maritalStatus: str | None = Field(default=None, max_length=50)
-    childrenCount: int | None = Field(default=None, ge=0, le=20)
     hasCar: bool | None = None
     workSchedule: str | None = Field(default=None, max_length=255)
     socialLinks: list[SocialLinkInput] | None = Field(default=None, max_length=5)
@@ -364,7 +362,6 @@ async def patch_profile(payload: ProfileInput, user=Depends(require_user), sessi
     profile_columns = {
         'birthDate': 'birth_date',
         'maritalStatus': 'marital_status',
-        'childrenCount': 'children_count',
         'hasCar': 'has_car',
         'workSchedule': 'work_schedule',
         'socialLinks': 'social_links',
@@ -489,7 +486,7 @@ async def event_rows(session, city: str | None, public_only=True):
         params['city'] = city.strip()
     events = await rows(session, f'''SELECT e.id AS internal_id,e.public_id AS id,s.public_id AS "sportId",u.public_id AS "organizerUserId",
       o.public_id AS "organizationId",e.title,COALESCE(e.description,'') AS description,
-      COALESCE(e.location,'') AS address,e.district,e.city,e.start_at AS "startsAt",e.price,e.capacity,
+      COALESCE(e.location,'') AS address,e.district,e.city,e.start_at AS "startsAt",e.capacity,
       e.join_mode AS "joinMode",CASE WHEN e.status='PUBLISHED' THEN 'published' ELSE 'unpublished' END AS status,e.level,
       e.min_age AS "minAge",e.image_url AS "imageUrl",e.rating,e.event_type AS "eventType",
       e.latitude::float AS latitude,e.longitude::float AS longitude,
@@ -499,6 +496,7 @@ async def event_rows(session, city: str | None, public_only=True):
     for event in events:
         event['startsAt'] = timestamp(event['startsAt'])
         event['rating'] = float(event['rating'])
+        event['level'] = float(event['level'])
         del event['internal_id']
     return events
 
@@ -533,7 +531,7 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
                     comments=[], notifications=notifications, favorites=[], likedEvents=[])
     params = {'ids': event_ids, 'user_id': user['db_id'] if user else -1}
     users = await rows(session, '''SELECT DISTINCT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,
-       p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
+       p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
        (SELECT count(*)::integer FROM events owner_events WHERE owner_events.organizer_id=u.id) AS "eventCount",
@@ -652,10 +650,9 @@ class EventInput(BaseModel):
     district: str | None = Field(default=None, max_length=100)
     city: str | None = Field(default=None, max_length=150)
     startsAt: datetime
-    price: int = Field(ge=0)
     capacity: int = Field(gt=0)
     joinMode: str = Field(pattern='^(open|application)$')
-    level: int = Field(ge=1, le=5)
+    level: float = Field(ge=0.5, le=5)
     sportName: str = Field(min_length=1, max_length=100)
     minAge: int | None = Field(default=None, ge=0, le=120)
     eventType: str = Field(default='game', pattern='^(game|training|tournament)$')
@@ -668,6 +665,14 @@ class EventInput(BaseModel):
         value = value.strip()
         if not value: raise ValueError('Field cannot be blank')
         return value
+
+    @field_validator('level')
+    @classmethod
+    def half_star_level(cls, value):
+        normalized = round(value * 2) / 2
+        if abs(value - normalized) > 1e-9:
+            raise ValueError('level must use 0.5-star increments')
+        return normalized
 
 
 @app.post('/api/v1/events', status_code=status.HTTP_201_CREATED)
@@ -685,12 +690,12 @@ async def create_event(payload: EventInput, user=Depends(require_user), session:
                 {'id': 'sp-' + uuid4().hex[:12], 'name': payload.sportName, 'slug': 'sport-' + uuid4().hex[:12]})
         event_id = 'ev-' + uuid4().hex[:12]
         event_db_id = await session.scalar(text('''INSERT INTO events(public_id,organizer_id,sport_id,title,description,event_type,location,district,city,start_at,
-             capacity,price,join_mode,level,min_age,latitude,longitude,image_url,status,published_at) VALUES
-             (:id,:user,:sport,:title,:description,:type,:address,:district,:city,:starts,:capacity,:price,:mode,:level,:age,:latitude,:longitude,NULL,'PUBLISHED',now())
+             capacity,join_mode,level,min_age,latitude,longitude,image_url,status,published_at) VALUES
+             (:id,:user,:sport,:title,:description,:type,:address,:district,:city,:starts,:capacity,:mode,:level,:age,:latitude,:longitude,NULL,'PUBLISHED',now())
              RETURNING id'''),
              {'id': event_id, 'user': user['db_id'], 'sport': sport, 'title': payload.title, 'description': payload.description.strip(),
               'type': payload.eventType, 'address': payload.address, 'district': payload.district, 'city': city, 'starts': payload.startsAt,
-              'capacity': payload.capacity, 'price': payload.price, 'mode': payload.joinMode, 'level': payload.level, 'age': payload.minAge,
+              'capacity': payload.capacity, 'mode': payload.joinMode, 'level': payload.level, 'age': payload.minAge,
               'latitude': payload.latitude, 'longitude': payload.longitude})
         if payload.eventType == 'tournament':
             # A sport specialization is inferred from prior event participation or organizing.
@@ -737,11 +742,11 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
                 {'id': 'sp-' + uuid4().hex[:12], 'name': payload.sportName, 'slug': 'sport-' + uuid4().hex[:12]})
         await session.execute(text('''UPDATE events SET sport_id=:sport,title=:title,description=:description,event_type=:type,
            location=:address,district=:district,city=:city,latitude=:latitude,longitude=:longitude,start_at=:starts,capacity=:capacity,
-           price=:price,join_mode=:mode,level=:level,min_age=:age,updated_at=now() WHERE id=:id'''), {
+           join_mode=:mode,level=:level,min_age=:age,updated_at=now() WHERE id=:id'''), {
             'id': event['id'], 'sport': sport, 'title': payload.title, 'description': payload.description.strip(),
             'type': payload.eventType, 'address': payload.address, 'district': payload.district, 'city': city,
             'latitude': payload.latitude, 'longitude': payload.longitude, 'starts': payload.startsAt,
-            'capacity': payload.capacity, 'price': payload.price, 'mode': payload.joinMode,
+            'capacity': payload.capacity, 'mode': payload.joinMode,
             'level': payload.level, 'age': payload.minAge,
         })
         if payload.eventType == 'tournament' and event['event_type'] != 'tournament':
