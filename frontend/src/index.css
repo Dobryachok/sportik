@@ -10,16 +10,16 @@
 }
 
 @theme {
-  --color-bg: #121212;
-  --color-card: #1e1e1e;
-  --color-card-elevated: #252525;
+  --color-bg: #0d0f11;
+  --color-card: #191d21;
+  --color-card-elevated: #22272c;
   --color-accent: #00aeef;
-  --color-accent-hover: #40a9ff;
-  --color-muted: #8e8e93;
-  --color-chip: #ffffff;
-  --color-warning: #ff453a;
-  --color-star: #ffc107;
-  --color-accent-line: #ff9500;
+  --color-accent-hover: #38c5ff;
+  --color-muted: #949ca6;
+  --color-chip: #f5f7f8;
+  --color-warning: #ff6258;
+  --color-star: #ffd24a;
+  --color-accent-line: #ffc928;
   --font-sans: 'Inter', system-ui, sans-serif;
 }
 
@@ -37,10 +37,33 @@ body {
   background: var(--color-bg);
   color: #fff;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 * {
   box-sizing: border-box;
+}
+
+button,
+a,
+input,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 .scrollbar-hide {

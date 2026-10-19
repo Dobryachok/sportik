@@ -1,4 +1,5 @@
 import {
+  ArrowLeft,
   CalendarPlus,
   Heart,
   Info,
@@ -23,103 +24,120 @@ export function EventDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { state, currentUser, like, review, favorite, setCity } = useAppData()
-  const event = state.events.find((e) => e.id === id)
+  const event = state.events.find((item) => item.id === id)
   const [lookup, setLookup] = useState<'loading' | 'missing'>('loading')
   const requestedId = useRef<string | null>(null)
+
   useEffect(() => {
     if (!id || event || requestedId.current === id) return
     requestedId.current = id
     setLookup('loading')
-    void fetchEvent(id).then(async (item) => {
-      if (!item.city || !(await setCity(item.city, false))) setLookup('missing')
-    }).catch(() => setLookup('missing'))
+    void fetchEvent(id)
+      .then(async (item) => {
+        if (!item.city || !(await setCity(item.city, false))) setLookup('missing')
+      })
+      .catch(() => setLookup('missing'))
   }, [id, event, setCity])
-  const sport = event ? state.sports.find((s) => s.id === event.sportId) : undefined
-  const organizer = event ? state.users.find((u) => u.id === event.organizerUserId) : undefined
+
+  const sport = event ? state.sports.find((item) => item.id === event.sportId) : undefined
+  const organizer = event ? state.users.find((user) => user.id === event.organizerUserId) : undefined
 
   if (!event) {
-    return <p className="text-muted">{lookup === 'loading' ? 'Загружаем событие…' : 'Событие не найдено'}</p>
+    return <p className="pt-4 text-muted">{lookup === 'loading' ? 'Загружаем событие…' : 'Событие не найдено'}</p>
   }
 
   const unpublished = event.status !== 'published'
-  const parts = getEventParticipants(state, event.id)
-  const myPart = currentUser
-    ? getUserParticipation(state, event.id, currentUser.id)
-    : undefined
+  const participants = getEventParticipants(state, event.id)
+  const myPart = currentUser ? getUserParticipation(state, event.id, currentUser.id) : undefined
   const isOrganizer = currentUser != null && event.organizerUserId === currentUser.id
-  const pending = state.participations.filter(
-    (p) => p.eventId === event.id && p.status === 'pending',
-  )
+  const pending = state.participations.filter((item) => item.eventId === event.id && item.status === 'pending')
   const liked = state.likedEvents.includes(event.id)
   const { date, time } = formatEventDate(event.startsAt)
-
+  const price = event.discountedPrice ?? event.price
   const canJoin = !unpublished && (!myPart || myPart.status === 'rejected')
   const showMobileCta = canJoin || (!unpublished && myPart?.status === 'pending')
 
   return (
-    <div className="min-w-0 max-w-full pb-action-bar-only md:grid md:grid-cols-2 md:gap-8 md:items-start">
-      <div>
-        <div className="relative mb-4 overflow-hidden rounded-2xl md:sticky md:top-6">
+    <div className="mx-auto min-w-0 max-w-full pb-action-bar-only md:grid md:max-w-6xl md:grid-cols-[minmax(0,1.1fr)_minmax(20rem,.9fr)] md:items-start md:gap-8">
+      <div className="md:sticky md:top-6">
+        <div className="relative min-h-72 overflow-hidden rounded-[1.55rem] border border-white/[0.09] bg-card shadow-[0_18px_38px_rgba(0,0,0,0.2)] md:min-h-[31rem]">
           <img
             src={event.imageUrl ?? '/images/hero.png'}
             alt=""
-            className="h-48 w-full object-cover md:h-80"
+            className="absolute inset-0 h-full w-full object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-          <Link
-            to="/events"
-            className="absolute left-3 top-3 flex h-10 w-10 items-center justify-center rounded-full bg-black/40 backdrop-blur"
-          >
-            ←
-          </Link>
-          <div className="absolute bottom-4 left-4 right-4 space-y-3">
-            <div className="min-w-0">
-              <p className="text-sm text-white/80">{date}</p>
-              <span className="mt-1 inline-block rounded-md bg-warning px-2 py-0.5 text-sm font-semibold">
-                {time}
-              </span>
-              <h1 className="mt-2 break-words text-xl font-bold capitalize leading-tight sm:text-2xl">
-                {event.title}
-              </h1>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {[Route, CalendarPlus, Share2].map((Icon, i) => (
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0d0f11] via-[#0d0f11]/32 to-black/15" />
+          <div className="absolute left-3 right-3 top-3 flex items-center justify-between">
+            <Link
+              to="/events"
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-black/30 text-white backdrop-blur-md"
+              aria-label="Назад к списку"
+            >
+              <ArrowLeft size={19} />
+            </Link>
+            <div className="flex gap-2">
+              {[Route, CalendarPlus, Share2].map((Icon, index) => (
                 <button
-                  key={i}
+                  key={index}
                   type="button"
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-black/30 sm:h-9 sm:w-9"
+                  className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-black/30 text-white backdrop-blur-md"
+                  aria-label="Действие с событием"
                 >
-                  <Icon size={15} />
+                  <Icon size={17} />
                 </button>
               ))}
               <button
                 type="button"
-                onClick={() => currentUser ? void like(event.id) : navigate('/login', { state: { from: `/events/${event.id}` } })}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/40 bg-black/30 sm:h-9 sm:w-9"
+                onClick={() =>
+                  currentUser ? void like(event.id) : navigate('/login', { state: { from: `/events/${event.id}` } })
+                }
+                className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-black/30 text-white backdrop-blur-md"
+                aria-label={liked ? 'Убрать отметку «нравится»' : 'Отметить «нравится»'}
               >
-                <Heart size={16} className={liked ? 'fill-warning text-warning' : ''} />
+                <Heart size={18} className={liked ? 'fill-warning text-warning' : ''} />
               </button>
+            </div>
+          </div>
+
+          <div className="absolute bottom-0 left-0 right-0 p-5 md:p-7">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              {sport && <span className="rounded-full bg-accent px-3 py-1 text-xs font-bold text-white">{sport.name}</span>}
+              <span className="rounded-full border border-white/30 bg-black/20 px-3 py-1 text-xs font-semibold text-white/90">
+                {date}
+              </span>
+            </div>
+            <div className="flex items-end justify-between gap-4">
+              <h1 className="max-w-[18ch] break-words text-[1.8rem] font-bold leading-[1.04] tracking-[-0.045em] text-white md:text-4xl">
+                {event.title}
+              </h1>
+              <span className="shrink-0 rounded-xl bg-accent-line px-3 py-2 text-sm font-bold text-[#1d1a10]">{time}</span>
             </div>
           </div>
         </div>
 
         {event.gallery && (
-          <div className="mb-4 flex gap-2 md:mb-0">
-            {event.gallery.map((src, i) => (
-              <img key={i} src={src} alt="" className="h-20 w-28 rounded-xl object-cover" />
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+            {event.gallery.map((src, index) => (
+              <img key={index} src={src} alt="" className="h-20 w-28 shrink-0 rounded-xl object-cover" />
             ))}
           </div>
         )}
       </div>
 
-      <div>
-        <p className="text-sm text-muted">
-          {sport?.name} Кто Куда {event.city}
-        </p>
-        <p className="mt-1 flex items-center gap-1 text-sm text-muted">
-          <MapPin size={14} className="text-accent" />
-          {event.address}
-        </p>
+      <div className="pt-6 md:pt-1">
+        <div className="flex items-start justify-between gap-4 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-muted">Место встречи</p>
+            <p className="mt-1 flex items-start gap-2 text-sm font-semibold leading-snug text-white">
+              <MapPin size={17} className="mt-0.5 shrink-0 text-accent" />
+              <span>{event.address}</span>
+            </p>
+          </div>
+          <div className="shrink-0 text-right">
+            <p className="text-xs text-muted">Участие</p>
+            <p className="mt-1 text-base font-bold text-white">{price === 0 ? 'Бесплатно' : `${price} ₽`}</p>
+          </div>
+        </div>
 
         {unpublished && (
           <p className="mt-4 rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-sm text-warning">
@@ -127,67 +145,59 @@ export function EventDetailPage() {
           </p>
         )}
 
-        <section className="mt-6">
-          <h2 className="text-lg font-bold">О событии</h2>
-          <p className="mt-2 break-words text-sm leading-relaxed text-white/90 whitespace-pre-line">
-            {event.description}
-          </p>
-          <button type="button" className="mt-2 text-sm text-accent">Показать всё</button>
+        <section className="mt-7">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-xl font-bold tracking-[-0.025em]">О событии</h2>
+            <StarRating value={event.rating} />
+          </div>
+          <p className="mt-3 whitespace-pre-line text-sm leading-6 text-white/85">{event.description}</p>
+          <button type="button" className="mt-3 text-sm font-semibold text-accent">Показать всё</button>
         </section>
 
-        <div className="mt-6 divide-y divide-white/10 rounded-2xl bg-card">
-          <div className="flex items-center justify-between px-4 py-3">
-            <span className="text-muted">Уровень</span>
+        <div className="mt-6 divide-y divide-white/[0.08] overflow-hidden rounded-[1.35rem] border border-white/[0.08] bg-card">
+          <div className="flex items-center justify-between gap-4 px-4 py-3.5">
+            <span className="text-sm text-muted">Уровень</span>
             <div className="flex items-center gap-2">
               <StarRating value={event.level} max={5} />
               <Info size={16} className="text-accent" />
             </div>
           </div>
           {event.minAge && (
-            <div className="flex items-center justify-between px-4 py-3">
-              <span className="text-muted">Ограничения</span>
-              <span>{event.minAge}+</span>
+            <div className="flex items-center justify-between gap-4 px-4 py-3.5">
+              <span className="text-sm text-muted">Возраст</span>
+              <span className="text-sm font-semibold">{event.minAge}+</span>
             </div>
           )}
-          <div className="flex items-center justify-between px-4 py-3">
-            <span className="text-muted">Запись</span>
-            <span>{event.joinMode === 'open' ? 'Свободная' : 'По заявке'}</span>
+          <div className="flex items-center justify-between gap-4 px-4 py-3.5">
+            <span className="text-sm text-muted">Запись</span>
+            <span className="text-sm font-semibold">{event.joinMode === 'open' ? 'Свободная' : 'По заявке'}</span>
+          </div>
+          <div className="flex items-center justify-between gap-4 px-4 py-3.5">
+            <span className="text-sm text-muted">Участники</span>
+            <span className="text-sm font-semibold">{event.confirmedCount ?? participants.length} / {event.capacity}</span>
           </div>
         </div>
 
         {myPart && (
-          <p className="mt-4 text-sm text-accent">
-            Ваш статус:{' '}
-            {myPart.status === 'confirmed'
-              ? 'Подтверждено'
-              : myPart.status === 'pending'
-                ? 'Ожидает решения'
-                : 'Отклонено'}
+          <p className="mt-4 rounded-xl border border-accent/25 bg-accent/10 px-3 py-2 text-sm text-accent">
+            Ваш статус: {myPart.status === 'confirmed' ? 'подтверждено' : myPart.status === 'pending' ? 'ожидает решения' : 'отклонено'}
           </p>
         )}
 
         {isOrganizer && pending.length > 0 && (
-          <div className="mt-4 rounded-2xl bg-card p-4">
-            <h3 className="font-semibold mb-2">Заявки</h3>
-            <ul className="space-y-2">
-              {pending.map((p) => {
-                const u = state.users.find((x) => x.id === p.userId)
+          <div className="mt-4 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
+            <h3 className="mb-3 font-bold">Заявки</h3>
+            <ul className="space-y-3">
+              {pending.map((participation) => {
+                const user = state.users.find((item) => item.id === participation.userId)
                 return (
-                  <li key={p.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-sm">
-                    <span>{u?.name}</span>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        className="text-accent"
-                        onClick={() => review(p.id, 'confirmed')}
-                      >
+                  <li key={participation.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2 text-sm">
+                    <span className="font-medium text-white">{user?.name}</span>
+                    <div className="flex gap-3">
+                      <button type="button" className="font-semibold text-accent" onClick={() => review(participation.id, 'confirmed')}>
                         Принять
                       </button>
-                      <button
-                        type="button"
-                        className="text-warning"
-                        onClick={() => review(p.id, 'rejected')}
-                      >
+                      <button type="button" className="font-semibold text-warning" onClick={() => review(participation.id, 'rejected')}>
                         Отклонить
                       </button>
                     </div>
@@ -198,47 +208,35 @@ export function EventDetailPage() {
           </div>
         )}
 
-        {isOrganizer && (
-          <p className="mt-2 text-sm text-muted">
-            Участников: {event.confirmedCount ?? parts.length} / {event.capacity}
-          </p>
-        )}
-
-        <div className="mt-6 flex flex-col gap-3 md:static md:mt-8">
+        <div className="mt-7 flex flex-col gap-3 md:mt-8">
           {isOrganizer && (
             <Link to={`/events/${event.id}/edit`}>
               <PrimaryButton variant="outline" fullWidth>Редактировать событие</PrimaryButton>
             </Link>
           )}
           <Link to={`/events/${event.id}/discussion`}>
-            <PrimaryButton variant="outline" fullWidth>
-              Обсудить в чате
-            </PrimaryButton>
+            <PrimaryButton variant="outline" fullWidth>Обсудить в чате</PrimaryButton>
           </Link>
           {canJoin && (
             <Link to={`/events/${event.id}/join`} className="hidden md:block">
-              <PrimaryButton fullWidth>
-                {event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}
-              </PrimaryButton>
+              <PrimaryButton fullWidth>{event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}</PrimaryButton>
             </Link>
           )}
           {!unpublished && myPart?.status === 'pending' && (
-            <PrimaryButton fullWidth disabled className="hidden md:flex">
-              Заявка отправлена
-            </PrimaryButton>
+            <PrimaryButton fullWidth disabled className="hidden md:flex">Заявка отправлена</PrimaryButton>
           )}
           <button
             type="button"
             onClick={() => currentUser ? void favorite(event.id) : navigate('/login', { state: { from: `/events/${event.id}` } })}
-            className="text-center text-sm text-muted"
+            className="py-1 text-center text-sm font-semibold text-muted transition-colors hover:text-white"
           >
             {state.favorites.includes(event.id) ? 'В избранном' : 'В избранное'}
           </button>
         </div>
 
         {organizer && (
-          <p className="mt-4 text-sm text-muted">
-            Организатор: <span className="text-white">{organizer.name}</span>
+          <p className="mt-5 text-sm text-muted">
+            Организатор: <span className="font-medium text-white">{organizer.name}</span>
           </p>
         )}
       </div>
@@ -247,9 +245,7 @@ export function EventDetailPage() {
         <MobileActionBar>
           {canJoin ? (
             <Link to={`/events/${event.id}/join`}>
-              <PrimaryButton fullWidth>
-                {event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}
-              </PrimaryButton>
+              <PrimaryButton fullWidth>{event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}</PrimaryButton>
             </Link>
           ) : (
             <PrimaryButton fullWidth disabled>Заявка отправлена</PrimaryButton>

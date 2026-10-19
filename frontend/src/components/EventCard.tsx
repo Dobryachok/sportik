@@ -23,54 +23,68 @@ export function EventCard({
   const price = event.discountedPrice ?? event.price
 
   return (
-    <div className="flex min-w-0 max-w-full gap-3">
+    <div className="flex min-w-0 max-w-full gap-3 sm:gap-4">
       {showTimeline && (
-        <div className="hidden w-16 shrink-0 pt-2 text-center text-xs text-muted md:block">
-          <div>{date}</div>
-          <div className="font-medium text-white">{day}</div>
-          <div>{time}</div>
+        <div className="hidden w-[4.5rem] shrink-0 pt-3 text-center md:block">
+          <p className="text-[11px] font-medium text-muted">{date}</p>
+          <p className="mt-0.5 text-sm font-bold text-white">{day}</p>
+          <span className="mt-2 inline-flex rounded-md bg-white/7 px-2 py-1 text-[11px] font-medium text-white/80">
+            {time}
+          </span>
         </div>
       )}
       <Link
         to={`/events/${event.id}`}
-        className="relative min-w-0 flex-1 overflow-hidden rounded-2xl bg-card p-4 transition hover:bg-card-elevated"
+        className="group relative min-w-0 flex-1 overflow-hidden rounded-[1.35rem] border border-white/[0.07] bg-card px-4 py-4 shadow-[0_14px_28px_rgba(0,0,0,0.16)] transition-colors hover:bg-card-elevated focus-visible:outline-none sm:px-5"
       >
-        <span className="absolute left-0 top-3 bottom-3 w-1 rounded-full bg-accent-line" />
-        <p className="mb-2 pl-2 text-xs text-muted md:hidden">
-          {date} · {day} · {time}
-        </p>
-        <div className="mb-2 flex flex-wrap gap-2 pl-2">
-          {sport && (
-            <span className="rounded-full border border-accent/50 px-2 py-0.5 text-xs text-accent">
-              {sport.name}
+        <span className="absolute bottom-4 left-0 top-4 w-1 rounded-r-full bg-accent-line" />
+        <div className="pl-2.5">
+          <div className="mb-3 flex items-start justify-between gap-2 md:hidden">
+            <span className="rounded-lg bg-white/[0.07] px-2 py-1 text-[11px] font-medium text-white/80">
+              {date} · {day} · {time}
             </span>
-          )}
-          {event.district && (
-            <span className="rounded-full border border-accent/50 px-2 py-0.5 text-xs text-accent">
-              {event.district}
-            </span>
-          )}
-        </div>
-        <h3 className="mb-1 break-words pl-2 text-base font-semibold capitalize leading-snug">{event.title}</h3>
-        <p className="mb-3 break-words pl-2 text-sm text-muted">{event.address}</p>
-        <div className="mb-3 flex items-center gap-2 pl-2">
-          <AvatarStack urls={participantAvatars} />
-          <span className="text-sm text-muted">
-            {participantCount} из {event.capacity} чел.
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-y-1 pl-2">
-          <div className="flex items-baseline gap-2">
-            {event.discountedPrice != null && (
-              <span className="text-sm text-muted line-through decoration-warning">
-                {event.price} ₽
+            <span className="shrink-0 text-sm font-bold text-white">{price === 0 ? 'Бесплатно' : `${price} ₽`}</span>
+          </div>
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {sport && (
+              <span className="rounded-full border border-accent/60 px-2.5 py-1 text-[11px] font-semibold text-accent">
+                {sport.name}
               </span>
             )}
-            <span className={`text-lg font-bold ${event.discountedPrice != null ? 'text-warning' : ''}`}>
-              {price} ₽
-            </span>
+            {event.district && (
+              <span className="rounded-full border border-white/15 px-2.5 py-1 text-[11px] font-medium text-white/70">
+                {event.district}
+              </span>
+            )}
           </div>
-          <StarRating value={event.rating} />
+          <h3 className="break-words text-[1.03rem] font-bold leading-snug tracking-[-0.015em] text-white group-hover:text-white">
+            {event.title}
+          </h3>
+          <p className="mt-1.5 break-words text-sm leading-snug text-muted">{event.address}</p>
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <AvatarStack urls={participantAvatars} />
+              <span className="truncate text-xs text-muted">
+                {participantCount} из {event.capacity} чел.
+              </span>
+            </div>
+            <div className="hidden items-center gap-3 md:flex">
+              <div className="flex items-baseline gap-2">
+                {event.discountedPrice != null && (
+                  <span className="text-xs text-muted line-through decoration-warning">
+                    {event.price} ₽
+                  </span>
+                )}
+                <span className={`text-base font-bold ${event.discountedPrice != null ? 'text-warning' : 'text-white'}`}>
+                  {price === 0 ? 'Бесплатно' : `${price} ₽`}
+                </span>
+              </div>
+              <StarRating value={event.rating} />
+            </div>
+            <div className="md:hidden">
+              <StarRating value={event.rating} />
+            </div>
+          </div>
         </div>
       </Link>
     </div>

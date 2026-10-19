@@ -57,31 +57,60 @@ export function CityChooser() {
     <div className="relative">
       <button
         type="button"
-        onClick={() => { setValue(city); setOpen(true) }}
-        className="flex shrink-0 items-center gap-1 text-sm text-accent"
+        onClick={() => {
+          setValue(city)
+          setOpen(true)
+        }}
+        className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 text-sm font-semibold text-white transition-colors hover:bg-white/[0.08]"
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <MapPin size={18} />{city || 'Выбрать город'}
+        <MapPin size={16} className="text-accent" />
+        <span className="max-w-28 truncate">{city || 'Город'}</span>
       </button>
       {open && (
-        <div role="dialog" aria-label="Выбор города" className="absolute right-0 top-9 z-50 w-[min(22rem,calc(100vw-2rem))] rounded-2xl bg-card p-4 shadow-2xl ring-1 ring-white/10">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="font-semibold">Где показать события?</h2>
-            <button type="button" onClick={() => setOpen(false)} aria-label="Закрыть"><X size={19} /></button>
+        <div
+          role="dialog"
+          aria-label="Выбор города"
+          className="absolute right-0 top-12 z-50 w-[min(22rem,calc(100vw-2rem))] rounded-[1.35rem] border border-white/10 bg-card p-4 shadow-2xl"
+        >
+          <div className="mb-3 flex items-center justify-between gap-4">
+            <h2 className="font-bold">Где показать события?</h2>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label="Закрыть"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors hover:bg-white/[0.08] hover:text-white"
+            >
+              <X size={19} />
+            </button>
           </div>
-          <p className="mb-3 text-xs leading-relaxed text-muted">
-            Укажите город или разрешите геолокацию. Координаты передаются сервису определения города, но не сохраняются в профиле или базе.
+          <p className="mb-4 text-xs leading-relaxed text-muted">
+            Укажите город или разрешите геолокацию. Координаты нужны только для определения города и не сохраняются.
           </p>
           <form onSubmit={save}>
-            <label className="block text-sm text-muted">
+            <label className="block text-sm font-medium text-white/80">
               Город
-              <input required value={value} onChange={(event) => setValue(event.target.value)} placeholder="Например, Омск" className="mt-1 w-full rounded-xl bg-bg px-3 py-2.5 text-white outline-none ring-accent focus:ring-1" />
+              <input
+                required
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                placeholder="Например, Омск"
+                className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3 py-3 text-white outline-none transition-colors focus:border-accent"
+              />
             </label>
-            <button className="mt-3 w-full rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold" type="submit">Показать события</button>
+            <button className="mt-3 w-full rounded-xl bg-accent px-3 py-3 text-sm font-bold text-white" type="submit">
+              Показать события
+            </button>
           </form>
-          <button type="button" disabled={locating} onClick={locate} className="mt-3 flex w-full items-center justify-center gap-2 text-sm text-accent disabled:opacity-60">
-            <LocateFixed size={17} />{locating ? 'Определяем…' : 'Определить по геолокации'}
+          <button
+            type="button"
+            disabled={locating}
+            onClick={locate}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-2 text-sm font-semibold text-accent transition-colors hover:bg-accent/10 disabled:opacity-60"
+          >
+            <LocateFixed size={17} />
+            {locating ? 'Определяем…' : 'Определить по геолокации'}
           </button>
           {message && <p role="status" className="mt-3 text-xs leading-relaxed text-warning">{message}</p>}
         </div>

@@ -1,3 +1,4 @@
+import { CalendarDays } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useAppData } from '../app/AppDataContext'
 import { EventCard, getParticipantAvatars } from '../components/EventCard'
@@ -14,57 +15,75 @@ const tabs = [
 
 export function MyEventsPage() {
   const { state, currentUser } = useAppData()
-  const [tab, setTab] = useState('past')
+  const [tab, setTab] = useState('upcoming')
   const userId = currentUser?.id
 
   const myEventIds = useMemo(() => {
     if (!userId) return new Set<string>()
     const joined = state.participations
-      .filter((p) => p.userId === userId && p.status !== 'rejected')
-      .map((p) => p.eventId)
+      .filter((participation) => participation.userId === userId && participation.status !== 'rejected')
+      .map((participation) => participation.eventId)
     const organized = state.events
-      .filter((e) => e.organizerUserId === userId)
-      .map((e) => e.id)
+      .filter((event) => event.organizerUserId === userId)
+      .map((event) => event.id)
     return new Set([...joined, ...organized])
   }, [state, userId])
 
   const events = useMemo(() => {
-    let list = state.events.filter((e) => e.status === 'published')
+    let list = state.events.filter((event) => event.status === 'published')
     if (tab === 'favorites') {
-      list = list.filter((e) => state.favorites.includes(e.id))
+      list = list.filter((event) => state.favorites.includes(event.id))
     } else if (tab === 'past') {
-      list = list.filter((e) => myEventIds.has(e.id) && isPast(e.startsAt))
+      list = list.filter((event) => myEventIds.has(event.id) && isPast(event.startsAt))
     } else {
-      list = list.filter((e) => myEventIds.has(e.id) && !isPast(e.startsAt))
+      list = list.filter((event) => myEventIds.has(event.id) && !isPast(event.startsAt))
     }
-    return list.sort((a, b) => new Date(b.startsAt).getTime() - new Date(a.startsAt).getTime())
+    return list.sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
   }, [state, tab, myEventIds])
 
+  const emptyCopy = tab === 'favorites'
+    ? 'Добавляйте интересные события в избранное — они появятся здесь.'
+    : tab === 'past'
+      ? 'Здесь появятся события, в которых вы уже участвовали.'
+      : 'Вы ещё не записались ни на одно событие.'
+
   return (
-    <div className="min-w-0 max-w-full">
+    <div className="mx-auto min-w-0 max-w-full md:max-w-5xl">
       <PageHeader title="Мои события" />
+      <p className="-mt-2 mb-5 text-sm text-muted">Ваши записи, встречи и сохранённые планы</p>
       <FilterChips items={tabs} activeId={tab} onChange={setTab} variant="dark" />
-      <div className="mt-6 flex flex-col gap-4">
-        {events.map((event) => {
-          const parts = getEventParticipants(state, event.id)
-          const sport = state.sports.find((s) => s.id === event.sportId)
-          return (
-            <EventCard
-              key={event.id}
-              event={event}
-              sport={sport}
-              participantCount={event.confirmedCount ?? parts.length}
-              participantAvatars={getParticipantAvatars(
-                state.users,
-                parts.map((p) => p.userId),
-              )}
-            />
-          )
-        })}
-        {events.length === 0 && (
-          <p className="py-12 text-center text-muted">Здесь пока пусто</p>
-        )}
-      </div>
+
+      <section className="mt-7">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-xl font-bold tracking-[-0.025em]">
+            {tab === 'favorites' ? 'Сохранённые' : tab === 'past' ? 'История событий' : 'Скоро'}
+          </h2>
+          {events.length > 0 && (
+            <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-xs font-semibold text-muted">{events.length}</span>
+          )}
+        </div>
+        <div className="flex flex-col gap-3">
+          {events.map((event) => {
+            const participants = getEventParticipants(state, event.id)
+            const sport = state.sports.find((item) => item.id === event.sportId)
+            return (
+              <EventCard
+                key={event.id}
+                event={event}
+                sport={sport}
+                participantCount={event.confirmedCount ?? participants.length}
+                participantAvatars={getParticipantAvatars(state.users, participants.map((participant) => participant.userId))}
+              />
+            )
+          })}
+          {events.length === 0 && (
+            <div className="rounded-[1.35rem] border border-dashed border-white/15 px-6 py-10 text-center">
+              <CalendarDays className="mx-auto text-accent" size={28} />
+              <p className="mx-auto mt-3 max-w-xs text-sm leading-relaxed text-muted">{emptyCopy}</p>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   )
 }

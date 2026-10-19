@@ -14,11 +14,11 @@ export function PrimaryButton({
   ...rest
 }: Props) {
   const base =
-    'rounded-2xl px-5 py-3.5 text-sm font-semibold transition disabled:opacity-50'
+    'min-h-12 rounded-2xl px-5 py-3 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50'
   const styles =
     variant === 'primary'
-      ? 'bg-accent text-white hover:bg-accent-hover'
-      : 'border border-accent text-accent bg-transparent hover:bg-accent/10'
+      ? 'bg-accent text-white shadow-[0_8px_20px_rgba(0,174,239,0.22)] hover:bg-accent-hover'
+      : 'border border-accent/75 bg-transparent text-accent hover:bg-accent/10'
 
   return (
     <button
