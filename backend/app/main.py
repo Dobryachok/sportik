@@ -158,7 +158,6 @@ async def create_login(session: AsyncSession, user_id: int):
 
 @app.post('/api/v1/auth/register', status_code=status.HTTP_201_CREATED)
 async def register(payload: Credentials, request: Request, response: Response, session: AsyncSession = Depends(db_session)):
-    await csrf_origin(request)
     await throttle_auth(payload.email, 'register', 5)
     if not payload.name:
         raise HTTPException(422, 'Name is required')
