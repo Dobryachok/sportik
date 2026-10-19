@@ -39,7 +39,7 @@ export const fetchMe = () => request<User | null>('/auth/me')
 export const register = (input: { email: string; password: string; name: string }) => request<User>('/auth/register', { method: 'POST', body: JSON.stringify(input) })
 export const login = (input: { email: string; password: string }) => request<User>('/auth/login', { method: 'POST', body: JSON.stringify(input) })
 export const logout = () => request<void>('/auth/logout', { method: 'POST' })
-export const updateProfile = (input: Partial<Pick<User, 'name' | 'bio' | 'city'>>) => request<User>('/profile', { method: 'PATCH', body: JSON.stringify(input) })
+export const updateProfile = (input: Partial<Pick<User, 'name' | 'bio' | 'city' | 'birthDate' | 'maritalStatus' | 'childrenCount' | 'hasCar' | 'workSchedule'>>) => request<User>('/profile', { method: 'PATCH', body: JSON.stringify(input) })
 export const uploadAvatar = (file: File) => { const body = new FormData(); body.append('file', file); return request<User>('/profile/avatar', { method: 'POST', body }) }
 export const reverseGeocode = (latitude: number, longitude: number) => request<{ city: string }>('/geo/reverse', { method: 'POST', body: JSON.stringify({ latitude, longitude }) })
 export const fetchEvent = (eventId: string) => request<Event>(`/events/${encodeURIComponent(eventId)}`)

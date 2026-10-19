@@ -16,6 +16,11 @@ export interface User {
   role: UserRole
   avatarUrl?: string
   bio?: string
+  birthDate?: string | null
+  maritalStatus?: string | null
+  childrenCount?: number | null
+  hasCar?: boolean | null
+  workSchedule?: string | null
   stats?: { events: number; subscriptions: number; followers: number }
 }
 

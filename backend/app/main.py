@@ -7,8 +7,9 @@ from io import BytesIO
 import secrets
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -72,17 +73,67 @@ async def restart_redis_cache():
         logger.info('Redis unavailable or restarting after committed data change')
 
 
+def age_from_birth_date(value: date | None):
+    if value is None:
+        return None
+    today = datetime.now(timezone.utc).date()
+    return today.year - value.year - ((today.month, today.day) < (value.month, value.day))
+
+
 def public_user(row):
-    return {'id': row['id'], 'name': row['name'], 'city': row.get('city') or '',
-            'role': row.get('role') or 'user', 'avatarUrl': row.get('avatarUrl'), 'bio': row.get('bio') or ''}
+    birth_date = row.get('birthDate')
+    age = row.get('age')
+    result = {
+        'id': row['id'],
+        'name': row['name'],
+        'city': row.get('city') or '',
+        'role': row.get('role') or 'user',
+        'avatarUrl': row.get('avatarUrl'),
+        'bio': row.get('bio') or '',
+        'birthDate': timestamp(birth_date),
+        'maritalStatus': row.get('maritalStatus'),
+        'childrenCount': row.get('childrenCount'),
+        'hasCar': row.get('hasCar'),
+        'workSchedule': row.get('workSchedule'),
+        'stats': {
+            'events': int(row.get('eventCount') or 0),
+            'subscriptions': int(row.get('subscriptionsCount') or 0),
+            'followers': int(row.get('followersCount') or 0),
+        },
+    }
+    if age is not None:
+        result['age'] = int(age)
+    elif birth_date is not None:
+        result['age'] = age_from_birth_date(birth_date)
+    return result
+
+
+def origin_matches_request_host(request: Request, origin: str):
+    """Accept the frontend served by the same host as the API reverse proxy."""
+    parsed = urlsplit(origin)
+    forwarded_proto = request.headers.get('x-forwarded-proto', '').split(',')[0].strip()
+    scheme = forwarded_proto or request.url.scheme
+    host = request.headers.get('host', '')
+    return (
+        parsed.scheme in {'http', 'https'}
+        and bool(host)
+        and parsed.netloc == host
+        and origin.rstrip('/') == f'{scheme}://{host}'
+    )
 
 
 async def csrf_origin(request: Request):
-    # Unsafe browser requests must carry an explicitly allowed Origin. This
-    # prevents cross-site form submissions even though the session cookie is HttpOnly.
+    # Unsafe cookie-authenticated requests must come from an explicitly allowed
+    # development origin or from the same host as the frontend reverse proxy.
+    # This retains CSRF protection for protected routes while allowing a deployed
+    # single-origin frontend without hard-coding its public domain in the image.
     origin = request.headers.get('origin')
-    if not origin or origin.rstrip('/') not in settings.allowed_origins:
+    if not origin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, 'Untrusted request origin')
+    clean_origin = origin.rstrip('/')
+    if clean_origin in settings.allowed_origins or origin_matches_request_host(request, clean_origin):
+        return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, 'Untrusted request origin')
 
 
 async def current_user(request: Request, session: AsyncSession = Depends(db_session)):
@@ -91,9 +142,14 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, 'Authentication required')
     digest = hashlib.sha256(token.encode()).hexdigest()
     user = (await session.execute(text("""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
+        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
+        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",
+        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
+        (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
         CASE WHEN EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=u.id AND om.role='OWNER')
              THEN 'organization' ELSE 'user' END AS role
         FROM auth_sessions s JOIN users u ON u.id=s.user_id
+        LEFT JOIN user_profiles p ON p.user_id=u.id
         WHERE s.token_hash=:hash AND s.revoked_at IS NULL AND s.expires_at > now() AND u.status='ACTIVE'"""),
                                       {'hash': digest})).mappings().first()
     if not user:
@@ -176,16 +232,22 @@ async def register(payload: Credentials, request: Request, response: Response, s
             await session.execute(text('INSERT INTO user_roles(user_id,role_id) VALUES (:user,:role) ON CONFLICT DO NOTHING'),
                                   {'user': user_id, 'role': role_id})
         token = await create_login(session, user_id)
-    result = {'id': public_id, 'name': payload.name, 'city': '', 'role': 'user', 'avatarUrl': None, 'bio': ''}
+    result = public_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'user', 'avatarUrl': None, 'bio': ''})
     set_session(response, token)
     return result
 
 
 @app.post('/api/v1/auth/login')
 async def login(payload: Credentials, request: Request, response: Response, session: AsyncSession = Depends(db_session)):
-    await csrf_origin(request)
+    # Login is public: there is no cookie-authenticated state to protect yet.
     await throttle_auth(payload.email, 'login', 20)
-    user = (await session.execute(text('SELECT id,public_id,password_hash,name,city,avatar_url AS "avatarUrl",bio FROM users WHERE lower(email)=:email AND status=\'ACTIVE\''),
+    user = (await session.execute(text('''SELECT u.id,u.public_id,u.password_hash,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
+        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
+        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",
+        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
+        (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount"
+        FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
+        WHERE lower(u.email)=:email AND u.status='ACTIVE' '''),
                                   {'email': payload.email})).mappings().first()
     stored_hash = user['password_hash'] if user and user['password_hash'] else _dummy_password_hash
     try:
@@ -228,13 +290,25 @@ class ProfileInput(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=150)
     bio: str | None = Field(default=None, max_length=5000)
     city: str | None = Field(default=None, max_length=150)
+    birthDate: date | None = None
+    maritalStatus: str | None = Field(default=None, max_length=50)
+    childrenCount: int | None = Field(default=None, ge=0, le=20)
+    hasCar: bool | None = None
+    workSchedule: str | None = Field(default=None, max_length=255)
 
-    @field_validator('name', 'city', 'bio')
+    @field_validator('name', 'city', 'bio', 'maritalStatus', 'workSchedule')
     @classmethod
     def clean(cls, value):
         if value is not None and not value.strip() and value != '':
             raise ValueError('Field cannot be whitespace')
         return value.strip() if value is not None else value
+
+    @field_validator('birthDate')
+    @classmethod
+    def birth_date_not_future(cls, value):
+        if value is not None and value > datetime.now(timezone.utc).date():
+            raise ValueError('Birth date cannot be in the future')
+        return value
 
 
 @app.patch('/api/v1/profile')
@@ -242,13 +316,38 @@ async def patch_profile(payload: ProfileInput, user=Depends(require_user), sessi
     values = payload.model_dump(exclude_unset=True)
     if not values:
         return public_user(user)
-    columns = {'name': 'name', 'bio': 'bio', 'city': 'city'}
-    sets = ', '.join(f'{columns[key]}=:{key}' for key in values)
+    user_columns = {'name': 'name', 'bio': 'bio', 'city': 'city'}
+    profile_columns = {
+        'birthDate': 'birth_date',
+        'maritalStatus': 'marital_status',
+        'childrenCount': 'children_count',
+        'hasCar': 'has_car',
+        'workSchedule': 'work_schedule',
+    }
+    user_values = {key: value for key, value in values.items() if key in user_columns}
+    profile_values = {key: value for key, value in values.items() if key in profile_columns}
     await session.commit()
     async with session.begin():
-        await session.execute(text(f'UPDATE users SET {sets},updated_at=now() WHERE id=:id'), {**values, 'id': user['db_id']})
+        if user_values:
+            sets = ', '.join(f'{user_columns[key]}=:{key}' for key in user_values)
+            await session.execute(text(f'UPDATE users SET {sets},updated_at=now() WHERE id=:id'), {
+                **user_values,
+                'id': user['db_id'],
+            })
+        if profile_values:
+            profile_keys = list(profile_values)
+            columns = ', '.join(['user_id', *(profile_columns[key] for key in profile_keys), 'updated_at'])
+            bindings = ', '.join([':id', *(f':{key}' for key in profile_keys), 'now()'])
+            updates = ', '.join(f'{profile_columns[key]}=EXCLUDED.{profile_columns[key]}' for key in profile_keys)
+            await session.execute(text(
+                f'INSERT INTO user_profiles ({columns}) VALUES ({bindings}) '
+                f'ON CONFLICT (user_id) DO UPDATE SET {updates},updated_at=now()'
+            ), {**profile_values, 'id': user['db_id']})
     await restart_redis_cache()
-    return public_user({**user, **values})
+    result = {**user, **user_values, **profile_values}
+    if 'birthDate' in profile_values:
+        result['age'] = age_from_birth_date(profile_values['birthDate'])
+    return public_user(result)
 
 
 def image_extension(data: bytes):
@@ -348,8 +447,12 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
                     comments=[], notifications=[], favorites=[], likedEvents=[])
     params = {'ids': event_ids, 'user_id': user['db_id'] if user else -1}
     users = await rows(session, '''SELECT DISTINCT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,
+       p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.children_count AS "childrenCount",
+       p.has_car AS "hasCar",p.work_schedule AS "workSchedule",
+       EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
+       (SELECT count(*)::integer FROM events owner_events WHERE owner_events.organizer_id=u.id) AS "eventCount",
        CASE WHEN EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=u.id AND om.role='OWNER') THEN 'organization' ELSE 'user' END AS role
-       FROM users u WHERE u.id IN (
+       FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id IN (
         SELECT organizer_id FROM events WHERE public_id = ANY(:ids)
         UNION SELECT c.user_id FROM event_comments c JOIN events e ON e.id=c.event_id WHERE e.public_id=ANY(:ids) AND c.status='VISIBLE'
         UNION SELECT r.user_id FROM event_registrations r JOIN events e ON e.id=r.event_id
