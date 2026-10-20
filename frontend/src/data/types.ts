@@ -6,7 +6,7 @@ export type JoinMode = 'open' | 'application'
 
 export type EventStatus = 'published' | 'unpublished'
 
-export type ParticipationStatus = 'confirmed' | 'pending' | 'rejected'
+export type ParticipationStatus = 'confirmed' | 'pending' | 'rejected' | 'cancelled'
 
 export interface SocialLink {
   platform: string
@@ -27,6 +27,7 @@ export interface User {
   maritalStatus?: string | null
   hasCar?: boolean | null
   workSchedule?: string | null
+  viewerFollows?: boolean
   stats?: { events: number; subscriptions: number; followers: number }
 }
 
@@ -52,6 +53,7 @@ export interface Event {
   sportId: string
   organizerUserId: string
   organizationId?: string
+  organizationName?: string | null
   title: string
   description: string
   address: string
@@ -86,6 +88,7 @@ export interface Comment {
   eventId: string
   authorId: string
   text: string
+  kind?: 'MESSAGE' | 'PARTICIPANT_JOINED' | 'PARTICIPANT_LEFT'
   createdAt: string
 }
 

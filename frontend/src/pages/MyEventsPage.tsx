@@ -48,7 +48,7 @@ export function MyEventsPage() {
       : 'Вы ещё не записались ни на одно событие.'
 
   return (
-    <div className="mx-auto min-w-0 max-w-full md:max-w-5xl">
+    <div className="page-frame">
       <PageHeader title="Мои события" />
       <p className="-mt-2 mb-5 text-sm text-muted">Ваши записи, встречи и сохранённые планы</p>
       <FilterChips items={tabs} activeId={tab} onChange={setTab} variant="dark" />

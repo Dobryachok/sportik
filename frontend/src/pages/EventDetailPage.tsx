@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
-import { fetchEvent, fetchEventParticipants } from '../data/api'
+import { fetchEvent, fetchEventParticipants, moderateEvent } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
 import { MobileActionBar } from '../components/MobileActionBar'
 import { PrimaryButton } from '../components/PrimaryButton'
@@ -24,10 +24,11 @@ import type { User } from '../data/types'
 export function EventDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { state, currentUser, like, review, favorite, setCity } = useAppData()
+  const { state, currentUser, like, review, favorite, leave, refresh, setCity } = useAppData()
   const event = state.events.find((item) => item.id === id)
   const [lookup, setLookup] = useState<'loading' | 'missing'>('loading')
   const [participantProfiles, setParticipantProfiles] = useState<User[]>([])
+  const [moderationError, setModerationError] = useState('')
   const requestedId = useRef<string | null>(null)
 
   useEffect(() => {
@@ -65,11 +66,25 @@ export function EventDetailPage() {
   const mapHref = event.latitude != null && event.longitude != null
     ? `https://yandex.ru/maps/?pt=${event.longitude},${event.latitude}&z=16&l=map`
     : `https://yandex.ru/maps/?text=${encodeURIComponent([event.city, event.address].filter(Boolean).join(', '))}`
-  const canJoin = !unpublished && (!myPart || myPart.status === 'rejected')
+  const canJoin = !unpublished && (!myPart || myPart.status === 'rejected' || myPart.status === 'cancelled')
   const showMobileCta = canJoin || (!unpublished && myPart?.status === 'pending')
+  const leaveConfirmedEvent = async () => {
+    if (!window.confirm('Покинуть это мероприятие?')) return
+    await leave(event.id)
+  }
+  const unpublishByAdmin = async () => {
+    if (!window.confirm('Снять событие с публикации? Пользователи больше не смогут записываться.')) return
+    try {
+      setModerationError('')
+      await moderateEvent(event.id, 'unpublish')
+      await refresh()
+    } catch (cause) {
+      setModerationError(cause instanceof Error ? cause.message : 'Не удалось снять событие с публикации.')
+    }
+  }
 
   return (
-    <div className="mx-auto min-w-0 max-w-full pb-action-bar-only md:grid md:max-w-6xl md:grid-cols-[minmax(0,1.1fr)_minmax(20rem,.9fr)] md:items-start md:gap-8">
+    <div className="page-frame pb-action-bar-only md:grid md:grid-cols-[minmax(0,1.1fr)_minmax(20rem,.9fr)] md:items-start md:gap-8">
       <div className="md:sticky md:top-6">
         <div className="relative min-h-72 overflow-hidden rounded-[1.55rem] border border-white/[0.09] bg-card shadow-[0_18px_38px_rgba(0,0,0,0.2)] md:min-h-[31rem]">
           <img
@@ -142,11 +157,14 @@ export function EventDetailPage() {
           </p>
         </div>
 
+        {event.organizationId && <div className="mt-3 rounded-[1.35rem] border border-white/[0.08] bg-card p-4"><p className="text-xs font-semibold text-muted">Организатор</p><Link to={`/organizations/${event.organizationId}`} className="mt-1 inline-block text-sm font-bold text-accent hover:text-accent-hover">{event.organizationName || 'Организация'}</Link></div>}
+
         {unpublished && (
           <p className="mt-4 rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-sm text-warning">
             Мероприятие снято с публикации
           </p>
         )}
+        {moderationError && <p role="alert" className="mt-3 text-sm text-rose-300">{moderationError}</p>}
 
         <section className="mt-7">
           <h2 className="text-xl font-bold tracking-[-0.025em]">О событии</h2>
@@ -180,7 +198,7 @@ export function EventDetailPage() {
 
         {myPart && (
           <p className="mt-4 rounded-xl border border-accent/25 bg-accent/10 px-3 py-2 text-sm text-accent">
-            Ваш статус: {myPart.status === 'confirmed' ? 'подтверждено' : myPart.status === 'pending' ? 'ожидает решения' : 'отклонено'}
+            Ваш статус: {myPart.status === 'confirmed' ? 'подтверждено' : myPart.status === 'pending' ? 'ожидает решения' : myPart.status === 'cancelled' ? 'вы покинули событие' : 'отклонено'}
           </p>
         )}
 
@@ -225,6 +243,8 @@ export function EventDetailPage() {
           {!unpublished && myPart?.status === 'pending' && (
             <PrimaryButton fullWidth disabled className="hidden md:flex">Заявка отправлена</PrimaryButton>
           )}
+          {!unpublished && myPart?.status === 'confirmed' && !isOrganizer && <PrimaryButton variant="outline" fullWidth onClick={() => void leaveConfirmedEvent()}>Покинуть событие</PrimaryButton>}
+          {currentUser?.role === 'admin' && !unpublished && <PrimaryButton variant="outline" fullWidth onClick={() => void unpublishByAdmin()}>Снять с публикации</PrimaryButton>}
           <button
             type="button"
             onClick={() => currentUser ? void favorite(event.id) : navigate('/login', { state: { from: `/events/${event.id}` } })}

@@ -15,6 +15,7 @@ export interface CreateEventInput {
   eventType: 'game' | 'training' | 'tournament'
   latitude?: number
   longitude?: number
+  organizationId?: string
 }
 
 export function getPublishedEvents(state: AppState): Event[] {
