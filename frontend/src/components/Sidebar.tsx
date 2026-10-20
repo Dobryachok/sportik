@@ -1,12 +1,13 @@
 import { ShieldCheck } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
-import { isNavActive, navItems } from '../app/navigation'
+import { isNavActive, navItems, visibleNavItems } from '../app/navigation'
 import { ThemeToggle } from './ThemeToggle'
 
 export function Sidebar() {
   const { pathname } = useLocation()
   const { currentUser } = useAppData()
+  const items = visibleNavItems(Boolean(currentUser))
 
   return (
     <aside className="hidden md:flex md:w-56 md:shrink-0 md:flex-col md:border-r md:border-white/10 md:bg-card/30 md:px-3 md:py-6">
@@ -15,7 +16,7 @@ export function Sidebar() {
         <p className="mt-0.5 text-xs text-muted">Найдите свою игру</p>
       </div>
       <nav className="flex flex-col gap-1" aria-label="Основная навигация">
-        {navItems.map((item) => {
+        {items.map((item) => {
           const active = isNavActive(item, pathname)
           const Icon = item.icon
           return (
