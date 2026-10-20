@@ -118,6 +118,21 @@ body {
   color: var(--app-accent) !important;
 }
 
+:root:not([data-theme='dark']) .location-suggest-list {
+  background: #ffffff !important;
+  border-color: var(--app-line) !important;
+  color: var(--app-ink);
+}
+
+:root:not([data-theme='dark']) .location-suggest-list button,
+:root:not([data-theme='dark']) .location-suggest-list .font-medium {
+  color: var(--app-ink) !important;
+}
+
+:root:not([data-theme='dark']) .location-suggest-list button:hover {
+  background: var(--app-card-elevated) !important;
+}
+
 button,
 a,
 input,

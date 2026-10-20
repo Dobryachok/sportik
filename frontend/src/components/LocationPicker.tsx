@@ -130,14 +130,14 @@ export function LocationPicker({
         </div>
       </label>
       {open && suggestions.length > 0 && (
-        <ul className="absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-xl border border-white/10 bg-[#20252a] p-1.5 shadow-2xl">
+        <ul className="location-suggest-list absolute z-30 mt-1 max-h-72 w-full overflow-y-auto rounded-xl border border-white/10 bg-card p-1.5 shadow-lg">
           {suggestions.map((item) => (
             <li key={`${item.latitude}:${item.longitude}:${item.label}`}>
               <button
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => choose(item)}
-                className="w-full rounded-lg px-3 py-2.5 text-left text-sm text-white transition-colors hover:bg-white/[0.08]"
+                className="w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors hover:bg-card-elevated"
               >
                 <span className="block font-medium leading-snug">{item.label}</span>
                 {item.address && item.address !== item.label && (
