@@ -125,6 +125,17 @@ async def seed_mock_catalog():
                     SELECT e.id,u.id,'Буду у входа в парк за десять минут до старта.','MESSAGE'
                     FROM events e JOIN users u ON u.public_id='u-seed-elena' WHERE e.public_id='ev-seed-volleyball'
                     AND NOT EXISTS (SELECT 1 FROM event_comments c WHERE c.event_id=e.id AND c.text='Буду у входа в парк за десять минут до старта.')"""))
+                await session.execute(text("""INSERT INTO teams(public_id,name,description,city,sport_id,status)
+                    SELECT 'tm-seed-bears','Красные медведи','Дружная футбольная команда для любителей.',
+                    'Красноярск', s.id, 'ACTIVE' FROM sports s WHERE s.public_id='sp-seed-football'
+                    ON CONFLICT (public_id) DO NOTHING"""))
+                await session.execute(text("""INSERT INTO team_members(team_id,user_id,role)
+                    SELECT t.id,u.id,'CAPTAIN' FROM teams t JOIN users u ON u.public_id='u-seed-artem'
+                    WHERE t.public_id='tm-seed-bears' ON CONFLICT DO NOTHING"""))
+                await session.execute(text("""INSERT INTO user_interests(user_id,interest_id)
+                    SELECT u.id,i.id FROM users u CROSS JOIN interests i
+                    WHERE u.public_id='u-seed-artem' AND i.slug IN ('football','games')
+                    ON CONFLICT DO NOTHING"""))
             logger.info('Mock catalog seeded')
     except Exception:
         logger.exception('Unable to seed mock catalog; backend will continue without it')
@@ -778,9 +789,11 @@ async def event_rows_by_public_ids(session, public_ids: list[str], public_only=T
 
 async def notification_rows(session: AsyncSession, user_id: int):
     items = await rows(session, '''SELECT 'n-' || n.id AS id,n.type,n.title,n.message AS body,n.is_read AS "isRead",
-       n.created_at AS "createdAt",e.public_id AS "eventId",o.public_id AS "organizationId",s.name AS "eventTag",e.start_at AS "eventStart"
+       n.created_at AS "createdAt",e.public_id AS "eventId",o.public_id AS "organizationId",s.name AS "eventTag",e.start_at AS "eventStart",
+       n.target_type AS "targetType",n.target_public_id AS "targetPublicId",n.team_request_id AS "teamRequestId",
+       t.public_id AS "teamPublicId"
        FROM notifications n LEFT JOIN events e ON e.id=n.event_id LEFT JOIN organizations o ON o.id=n.organization_id
-       LEFT JOIN sports s ON s.id=e.sport_id
+       LEFT JOIN sports s ON s.id=e.sport_id LEFT JOIN teams t ON t.id=n.team_id
        WHERE n.user_id=:user AND n.dismissed_at IS NULL ORDER BY n.created_at DESC,n.id DESC''', {'user': user_id})
     for item in items:
         item['createdAt'] = timestamp(item['createdAt'])
@@ -788,7 +801,17 @@ async def notification_rows(session: AsyncSession, user_id: int):
             item['eventDate'] = timestamp(item.pop('eventStart'))
         else:
             item.pop('eventStart', None)
-        if item.get('eventId'):
+        ntype = item.get('type') or ''
+        if ntype == 'DISCOVERY_LIKE' and item.get('targetPublicId'):
+            item['linkUrl'] = f"/discovery?mode=users&user={item['targetPublicId']}"
+            item['linkText'] = 'Открыть Discovery'
+        elif ntype == 'TEAM_JOIN_REQUEST' and item.get('teamRequestId'):
+            item['linkUrl'] = f"/discovery?mode=teams&request={item['teamRequestId']}"
+            item['linkText'] = 'Посмотреть заявку'
+        elif ntype in {'TEAM_REQUEST_ACCEPTED', 'TEAM_REQUEST_REJECTED'} and item.get('teamPublicId'):
+            item['linkUrl'] = f"/teams/{item['teamPublicId']}"
+            item['linkText'] = 'Открыть команду'
+        elif item.get('eventId'):
             if item.get('type') == 'event_moderation':
                 item['linkUrl'] = '/my-events'
                 item['linkText'] = 'Мои события'
@@ -800,6 +823,10 @@ async def notification_rows(session: AsyncSession, user_id: int):
             item['linkText'] = 'Открыть организацию'
         item.pop('eventId', None)
         item.pop('organizationId', None)
+        item.pop('targetType', None)
+        item.pop('targetPublicId', None)
+        item.pop('teamRequestId', None)
+        item.pop('teamPublicId', None)
     return items
 
 
@@ -1753,3 +1780,8 @@ async def reverse_geo(payload: ReverseGeoInput, request: Request):
                     _geo_last_request = time.monotonic()
     # Deliberately do not retain coordinates.  The client offers manual city input on failure.
     raise HTTPException(503, 'Unable to determine city; enter it manually')
+
+
+from app.discovery.routes import register as register_discovery_routes
+
+register_discovery_routes(app)

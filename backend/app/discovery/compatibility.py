@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 WEIGHTS = {
-    'interests': 35,
-    'sport': 25,
-    'city': 20,
-    'age': 10,
-    'shared_teams': 10,
+    'interests': 40,
+    'sport': 30,
+    'city': 15,
+    'extra': 15,
+}
+
+_EXTRA_SPLIT = {
+    'age': 0.6,
+    'shared_teams': 0.4,
 }
 
 
@@ -45,15 +49,31 @@ def compatibility_score(
     candidate_sports: set[str],
     candidate_team_ids: set[int],
 ) -> int:
+    extra = (
+        _EXTRA_SPLIT['age'] * _age_score(viewer_age, candidate_age)
+        + _EXTRA_SPLIT['shared_teams']
+        * _jaccard({str(i) for i in viewer_team_ids}, {str(i) for i in candidate_team_ids})
+    )
     parts = [
         WEIGHTS['interests'] * _jaccard(viewer_interests, candidate_interests),
         WEIGHTS['sport'] * _jaccard(viewer_sports, candidate_sports),
         WEIGHTS['city'] * (1.0 if viewer_city and candidate_city and viewer_city.casefold() == candidate_city.casefold() else 0.0),
-        WEIGHTS['age'] * _age_score(viewer_age, candidate_age),
-        WEIGHTS['shared_teams'] * _jaccard(
-            {str(i) for i in viewer_team_ids},
-            {str(i) for i in candidate_team_ids},
-        ),
+        WEIGHTS['extra'] * extra,
     ]
     total_weight = sum(WEIGHTS.values())
     return max(0, min(100, round(sum(parts) / total_weight * 100)))
+
+
+def team_compatibility_score(
+    *,
+    viewer_city: str,
+    viewer_sports: set[str],
+    viewer_interests: set[str],
+    team_city: str,
+    team_sport_slug: str,
+) -> int:
+    sport_hit = 1.0 if team_sport_slug and team_sport_slug in {s.casefold() for s in viewer_sports} else 0.0
+    city_hit = 1.0 if viewer_city and team_city and viewer_city.casefold() == team_city.casefold() else 0.0
+    interest_boost = 0.35 if viewer_interests else 0.15
+    raw = sport_hit * 0.55 + city_hit * 0.3 + interest_boost * 0.15
+    return max(0, min(100, round(raw * 100)))

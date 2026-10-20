@@ -12,7 +12,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData = init.body instanceof FormData
   const response = await fetch(`${API_BASE_URL}/api/v1${path}`, {
     ...init,
