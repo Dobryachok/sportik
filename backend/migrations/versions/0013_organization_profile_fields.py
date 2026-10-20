@@ -3,7 +3,7 @@
 from alembic import op
 
 revision = '0013_organization_profile_fields'
-down_revision = '0012_sport_background_image'
+down_revision = '0012_sport_background'
 branch_labels = None
 depends_on = None
 
