@@ -1,22 +1,126 @@
-import { useEffect, useState } from 'react'
+import { Camera } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { fetchDiscoveryTeam } from '../api/discovery'
+import {
+  acceptJoinRequest,
+  fetchDiscoveryTeam,
+  fetchTeamJoinRequests,
+  inviteTeamByEmail,
+  joinTeamRequest,
+  rejectJoinRequest,
+  uploadTeamLogo,
+} from '../api/discovery'
 import { TeamMembersPreview } from '../components/discovery/TeamMembersPreview'
 import { PageHeader } from '../components/PageHeader'
-import type { DiscoveryTeamCard } from '../data/discoveryTypes'
+import { PrimaryButton } from '../components/PrimaryButton'
+import type { DiscoveryTeamCard, TeamJoinRequestRow } from '../data/discoveryTypes'
+
+function teamRoleLabel(role: string | undefined | null) {
+  if (role === 'CAPTAIN') return 'Капитан'
+  if (role === 'ADMIN') return 'Администратор'
+  if (role === 'MEMBER') return 'Участник'
+  return 'Участник'
+}
 
 export function TeamDetailPage() {
   const { id: teamId = '' } = useParams()
   const [team, setTeam] = useState<DiscoveryTeamCard | null>(null)
   const [error, setError] = useState('')
+  const [joinBusy, setJoinBusy] = useState(false)
+  const [requests, setRequests] = useState<TeamJoinRequestRow[]>([])
+  const [requestsBusy, setRequestsBusy] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteStatus, setInviteStatus] = useState('')
+  const [inviteBusy, setInviteBusy] = useState(false)
+  const [logoBusy, setLogoBusy] = useState(false)
+  const logoInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
+  const loadTeam = () => {
     void fetchDiscoveryTeam(teamId)
       .then(setTeam)
       .catch((err) => setError(err instanceof Error ? err.message : 'Не удалось загрузить команду.'))
+  }
+
+  useEffect(() => {
+    loadTeam()
   }, [teamId])
 
-  if (error) {
+  useEffect(() => {
+    if (!team?.canManage) {
+      setRequests([])
+      return
+    }
+    setRequestsBusy(true)
+    void fetchTeamJoinRequests(teamId)
+      .then(setRequests)
+      .catch(() => setRequests([]))
+      .finally(() => setRequestsBusy(false))
+  }, [team?.canManage, teamId])
+
+  const submitJoin = async () => {
+    if (joinBusy) return
+    setJoinBusy(true)
+    setError('')
+    try {
+      await joinTeamRequest(teamId)
+      loadTeam()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось отправить заявку.')
+    } finally {
+      setJoinBusy(false)
+    }
+  }
+
+  const reviewRequest = async (requestId: number, decision: 'accept' | 'reject') => {
+    setRequestsBusy(true)
+    setError('')
+    try {
+      if (decision === 'accept') await acceptJoinRequest(teamId, requestId)
+      else await rejectJoinRequest(teamId, requestId)
+      setRequests((items) => items.filter((item) => item.requestId !== requestId))
+      loadTeam()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось обработать заявку.')
+    } finally {
+      setRequestsBusy(false)
+    }
+  }
+
+  const sendInvite = async () => {
+    const email = inviteEmail.trim()
+    if (!email || inviteBusy) return
+    setInviteBusy(true)
+    setInviteStatus('')
+    try {
+      const result = await inviteTeamByEmail(teamId, email)
+      setInviteEmail('')
+      setInviteStatus(
+        result.userFound
+          ? 'Приглашение отправлено. Пользователь увидит его в уведомлениях.'
+          : 'Приглашение сохранено. Пользователь увидит его после регистрации с этой почтой.',
+      )
+    } catch (err) {
+      setInviteStatus(err instanceof Error ? err.message : 'Не удалось отправить приглашение.')
+    } finally {
+      setInviteBusy(false)
+    }
+  }
+
+  const onLogoSelected = async (file: File | undefined) => {
+    if (!file || !team?.canManage || logoBusy) return
+    setLogoBusy(true)
+    setError('')
+    try {
+      const result = await uploadTeamLogo(teamId, file)
+      setTeam((current) => (current ? { ...current, logoUrl: result.logoUrl } : current))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить аватар.')
+    } finally {
+      setLogoBusy(false)
+    }
+  }
+
+  if (error && !team) {
     return (
       <div className="page-frame">
         <PageHeader title="Команда" back />
@@ -34,25 +138,65 @@ export function TeamDetailPage() {
     )
   }
 
+  const canJoin = !team.viewerRole && !team.joinRequestStatus
+
   return (
     <div className="page-frame pb-6">
       <PageHeader title={team.name} back />
+      {error && <p role="alert" className="mb-4 rounded-xl bg-warning/10 px-3 py-2 text-sm text-warning">{error}</p>}
       <section className="rounded-[1.75rem] border border-white/10 bg-card p-5">
         <div className="flex items-center gap-4">
-          {team.logoUrl ? (
-            <img src={team.logoUrl} alt="" className="h-20 w-20 rounded-2xl object-cover" />
-          ) : (
-            <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-accent/15 text-3xl">🏆</div>
-          )}
+          <div className="relative">
+            {team.logoUrl ? (
+              <img src={team.logoUrl} alt="" className="h-20 w-20 rounded-2xl object-cover" />
+            ) : (
+              <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-accent/15 text-3xl">🏆</div>
+            )}
+            {team.canManage && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => logoInputRef.current?.click()}
+                  disabled={logoBusy}
+                  className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full bg-accent text-white shadow-lg disabled:opacity-60"
+                  aria-label="Загрузить аватар команды"
+                >
+                  <Camera size={16} />
+                </button>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    void onLogoSelected(file)
+                    event.target.value = ''
+                  }}
+                />
+              </>
+            )}
+          </div>
           <div>
             <p className="text-sm text-muted">{team.sport}</p>
             <p className="text-sm text-muted">{team.city}</p>
+            {team.viewerRole && (
+              <p className="mt-1 text-xs font-semibold text-accent">Ваш статус: {teamRoleLabel(team.viewerRole)}</p>
+            )}
+            {team.joinRequestStatus === 'PENDING' && (
+              <p className="mt-1 text-xs font-semibold text-amber-300">Заявка на вступление на рассмотрении</p>
+            )}
             {team.createdAt && (
               <p className="mt-1 text-xs text-muted">Создана {new Date(team.createdAt).toLocaleDateString('ru-RU')}</p>
             )}
           </div>
         </div>
         {team.description && <p className="mt-4 text-sm leading-relaxed text-muted">{team.description}</p>}
+        {canJoin && (
+          <PrimaryButton className="mt-4" disabled={joinBusy} onClick={() => void submitJoin()}>
+            {joinBusy ? 'Отправляем…' : 'Подать заявку на вступление'}
+          </PrimaryButton>
+        )}
         <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
           <div className="rounded-xl bg-bg/70 p-3">
             <p className="text-muted">Игр</p>
@@ -64,6 +208,77 @@ export function TeamDetailPage() {
           </div>
         </div>
       </section>
+
+      {team.canManage && (
+        <section className="mt-5 rounded-[1.75rem] border border-white/10 bg-card p-5">
+          <h2 className="text-lg font-bold">Пригласить по почте</h2>
+          <p className="mt-1 text-sm text-muted">Отправьте приглашение зарегистрированному пользователю или сохраните его для новой регистрации.</p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <input
+              type="email"
+              value={inviteEmail}
+              onChange={(event) => setInviteEmail(event.target.value)}
+              placeholder="email@example.com"
+              className="min-h-11 flex-1 rounded-xl border border-white/10 bg-bg px-3 text-sm text-white outline-none focus:border-accent"
+            />
+            <button
+              type="button"
+              disabled={inviteBusy || !inviteEmail.trim()}
+              onClick={() => void sendInvite()}
+              className="min-h-11 rounded-xl bg-accent px-4 text-sm font-bold text-white disabled:opacity-50"
+            >
+              {inviteBusy ? 'Отправка…' : 'Пригласить'}
+            </button>
+          </div>
+          {inviteStatus && <p className="mt-2 text-xs text-muted">{inviteStatus}</p>}
+        </section>
+      )}
+
+      {team.canManage && (
+        <section className="mt-5 rounded-[1.75rem] border border-accent/25 bg-card p-5">
+          <h2 className="text-lg font-bold">Заявки на вступление</h2>
+          {requestsBusy && requests.length === 0 && <p className="mt-3 text-sm text-muted">Загрузка…</p>}
+          {!requestsBusy && requests.length === 0 && (
+            <p className="mt-3 text-sm text-muted">Нет ожидающих заявок.</p>
+          )}
+          <ul className="mt-3 space-y-3">
+            {requests.map((request) => (
+              <li key={request.requestId} className="rounded-xl border border-white/10 p-3">
+                <div className="flex items-center gap-3">
+                  <img src={request.avatarUrl || '/images/hero.png'} alt="" className="h-10 w-10 rounded-full object-cover" />
+                  <div className="min-w-0 flex-1">
+                    <Link to={`/users/${request.userId}`} className="font-semibold text-white hover:text-accent">
+                      {request.name}
+                    </Link>
+                    {request.createdAt && (
+                      <p className="text-xs text-muted">{new Date(request.createdAt).toLocaleString('ru-RU')}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={requestsBusy}
+                    onClick={() => void reviewRequest(request.requestId, 'reject')}
+                    className="min-h-10 flex-1 rounded-xl border border-warning/40 text-sm font-semibold text-warning"
+                  >
+                    Отклонить
+                  </button>
+                  <button
+                    type="button"
+                    disabled={requestsBusy}
+                    onClick={() => void reviewRequest(request.requestId, 'accept')}
+                    className="min-h-10 flex-1 rounded-xl bg-accent text-sm font-bold text-white"
+                  >
+                    Принять
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="mt-5 rounded-[1.75rem] border border-white/10 bg-card p-5">
         <h2 className="text-lg font-bold">Участники</h2>
         <div className="mt-3 space-y-3">
@@ -76,9 +291,7 @@ export function TeamDetailPage() {
               <img src={member.avatarUrl || '/images/hero.png'} alt="" className="h-10 w-10 rounded-full object-cover" />
               <div>
                 <p className="font-semibold text-white">{member.name}</p>
-                <p className="text-xs text-muted">
-                  {member.role === 'CAPTAIN' ? 'Капитан' : member.role === 'ADMIN' ? 'Администратор' : 'Участник'}
-                </p>
+                <p className="text-xs text-muted">{teamRoleLabel(member.role)}</p>
               </div>
             </Link>
           ))}

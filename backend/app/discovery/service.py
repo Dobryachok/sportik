@@ -133,7 +133,8 @@ async def user_interests(session: AsyncSession, user_db_id: int) -> list[dict]:
 async def user_teams_groups(session: AsyncSession, user_db_id: int) -> tuple[list[dict], list[dict]]:
     teams = await _rows(
         session,
-        '''SELECT t.public_id AS id, t.name, tm.role, s.name AS sport
+        '''SELECT t.public_id AS id, t.name, tm.role, s.name AS sport, t.logo_url AS "logoUrl",
+           'member' AS "membershipStatus"
            FROM team_members tm
            JOIN teams t ON t.id = tm.team_id
            JOIN sports s ON s.id = t.sport_id
@@ -141,6 +142,21 @@ async def user_teams_groups(session: AsyncSession, user_db_id: int) -> tuple[lis
            ORDER BY t.name''',
         {'user': user_db_id},
     )
+    pending = await _rows(
+        session,
+        '''SELECT t.public_id AS id, t.name, 'APPLICANT' AS role, s.name AS sport, t.logo_url AS "logoUrl",
+           'pending' AS "membershipStatus"
+           FROM team_join_requests r
+           JOIN teams t ON t.id = r.team_id
+           JOIN sports s ON s.id = t.sport_id
+           WHERE r.user_id = :user AND r.status = 'PENDING' AND t.status = 'ACTIVE'
+           AND NOT EXISTS (
+             SELECT 1 FROM team_members tm WHERE tm.team_id = t.id AND tm.user_id = :user
+           )
+           ORDER BY r.created_at DESC''',
+        {'user': user_db_id},
+    )
+    teams.extend(pending)
     groups = await _rows(
         session,
         '''SELECT g.public_id AS id, g.name, gm.role
@@ -353,6 +369,32 @@ async def get_team_by_public_id(session: AsyncSession, viewer_id: int | None, pu
            ORDER BY CASE tm.role WHEN 'CAPTAIN' THEN 0 WHEN 'ADMIN' THEN 1 ELSE 2 END, u.name''',
         {'team': team['db_id']},
     )
+    if viewer_id:
+        viewer_role = await session.scalar(
+            text('SELECT role FROM team_members WHERE team_id = :team AND user_id = :user'),
+            {'team': team['db_id'], 'user': viewer_id},
+        )
+        card['viewerRole'] = viewer_role
+        card['canManage'] = bool(
+            await session.scalar(
+                text(
+                    '''SELECT 1 FROM team_members
+                       WHERE team_id = :team AND user_id = :user AND role IN ('CAPTAIN','ADMIN')'''
+                ),
+                {'team': team['db_id'], 'user': viewer_id},
+            )
+        )
+        card['joinRequestStatus'] = await session.scalar(
+            text(
+                '''SELECT status FROM team_join_requests
+                   WHERE team_id = :team AND user_id = :user AND status = 'PENDING' LIMIT 1'''
+            ),
+            {'team': team['db_id'], 'user': viewer_id},
+        )
+    else:
+        card['viewerRole'] = None
+        card['canManage'] = False
+        card['joinRequestStatus'] = None
     return card
 
 
@@ -511,6 +553,7 @@ async def list_join_requests(session: AsyncSession, team_public_id: str, manager
         {'team': team_id},
     )
     for item in pending:
+        item['requestId'] = item['id']
         if item.get('createdAt'):
             item['createdAt'] = item['createdAt'].isoformat()
     return pending
@@ -641,3 +684,153 @@ async def create_team(session: AsyncSession, owner_id: int, payload: TeamCreateI
 async def profile_memberships(session: AsyncSession, user_id: int) -> dict:
     teams, groups = await user_teams_groups(session, user_id)
     return {'teams': teams, 'groups': groups}
+
+
+async def invite_team_by_email(
+    session: AsyncSession,
+    team_public_id: str,
+    manager_id: int,
+    email: str,
+    notify: Any,
+) -> dict:
+    normalized = email.strip().lower()
+    if '@' not in normalized or '.' not in normalized.split('@')[-1]:
+        raise HTTPException(422, 'Enter a valid email address')
+    team_id = await resolve_team_db_id(session, team_public_id)
+    await assert_team_manager(session, team_id, manager_id)
+    invitee = await _row(
+        session,
+        "SELECT id, public_id FROM users WHERE lower(email) = :email AND status = 'ACTIVE'",
+        {'email': normalized},
+    )
+    if invitee and await session.scalar(
+        text('SELECT 1 FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': team_id, 'user': invitee['id']},
+    ):
+        raise HTTPException(409, 'User is already a team member')
+    existing = await session.scalar(
+        text(
+            '''SELECT id FROM team_email_invites
+               WHERE team_id = :team AND lower(email) = :email AND status = 'PENDING' '''
+        ),
+        {'team': team_id, 'email': normalized},
+    )
+    if existing:
+        raise HTTPException(409, 'Invite already sent to this email')
+    invite_id = await session.scalar(
+        text(
+            '''INSERT INTO team_email_invites(team_id, email, invited_by, invitee_user_id, status)
+               VALUES (:team, :email, :manager, :invitee, 'PENDING') RETURNING id'''
+        ),
+        {
+            'team': team_id,
+            'email': normalized,
+            'manager': manager_id,
+            'invitee': invitee['id'] if invitee else None,
+        },
+    )
+    await notify(session, manager_id, team_id, team_public_id, normalized, int(invite_id), invitee)
+    return {'ok': True, 'inviteId': int(invite_id), 'userFound': bool(invitee)}
+
+
+async def accept_team_email_invite(session: AsyncSession, invite_id: int, user_id: int) -> dict:
+    invite = await _row(
+        session,
+        '''SELECT i.id, i.team_id, i.email, i.status, t.public_id AS "teamPublicId"
+           FROM team_email_invites i JOIN teams t ON t.id = i.team_id
+           WHERE i.id = :id FOR UPDATE''',
+        {'id': invite_id},
+    )
+    if not invite or invite['status'] != 'PENDING':
+        raise HTTPException(404, 'Invite not found')
+    user_email = await session.scalar(text('SELECT lower(email) FROM users WHERE id = :id'), {'id': user_id})
+    if user_email != invite['email'].lower():
+        raise HTTPException(403, 'This invite was sent to another email address')
+    await session.execute(
+        text(
+            '''INSERT INTO team_members(team_id, user_id, role)
+               VALUES (:team, :user, 'MEMBER') ON CONFLICT (team_id, user_id) DO NOTHING'''
+        ),
+        {'team': invite['team_id'], 'user': user_id},
+    )
+    await session.execute(
+        text("UPDATE team_email_invites SET status = 'ACCEPTED', invitee_user_id = :user, responded_at = now() WHERE id = :id"),
+        {'user': user_id, 'id': invite_id},
+    )
+    return {'status': 'ACCEPTED', 'teamId': invite['teamPublicId']}
+
+
+async def attach_pending_team_invites(session: AsyncSession, user_id: int, email: str) -> None:
+    pending = await _rows(
+        session,
+        '''SELECT i.id, i.team_id, t.public_id AS "teamPublicId", t.name AS "teamName"
+           FROM team_email_invites i
+           JOIN teams t ON t.id = i.team_id
+           WHERE lower(i.email) = :email AND i.status = 'PENDING' ''',
+        {'email': email.strip().lower()},
+    )
+    for item in pending:
+        await session.execute(
+            text('UPDATE team_email_invites SET invitee_user_id = :user WHERE id = :id'),
+            {'user': user_id, 'id': item['id']},
+        )
+        await session.execute(
+            text(
+                '''INSERT INTO notifications(user_id, type, title, message, team_id, target_type, target_public_id)
+                   VALUES (:user, 'TEAM_INVITE', :title, :message, :team, 'TEAM', :public_id)'''
+            ),
+            {
+                'user': user_id,
+                'title': 'Приглашение в команду',
+                'message': f'Вас пригласили в команду «{item["teamName"]}».',
+                'team': item['team_id'],
+                'public_id': item['teamPublicId'],
+            },
+        )
+
+
+async def list_pending_team_invites(session: AsyncSession, user_id: int) -> list[dict]:
+    rows_out = await _rows(
+        session,
+        '''SELECT i.id AS "inviteId", t.public_id AS "teamId", t.name AS "teamName", t.logo_url AS "logoUrl",
+           u.name AS "invitedByName", i.created_at AS "createdAt"
+           FROM team_email_invites i
+           JOIN teams t ON t.id = i.team_id
+           JOIN users u ON u.id = i.invited_by
+           WHERE i.invitee_user_id = :user AND i.status = 'PENDING'
+           ORDER BY i.created_at DESC''',
+        {'user': user_id},
+    )
+    for item in rows_out:
+        if item.get('createdAt'):
+            item['createdAt'] = item['createdAt'].isoformat()
+    return rows_out
+
+
+async def upload_team_logo(
+    session: AsyncSession,
+    team_public_id: str,
+    manager_id: int,
+    media_id: str,
+    filename: str,
+    content_type: str,
+) -> str:
+    team_id = await resolve_team_db_id(session, team_public_id)
+    await assert_team_manager(session, team_id, manager_id)
+    old = await session.scalar(text('SELECT filename FROM team_avatars WHERE team_id = :id'), {'id': team_id})
+    await session.execute(
+        text(
+            '''INSERT INTO team_avatars(id, team_id, filename, content_type)
+               VALUES (:media, :team, :file, :type)
+               ON CONFLICT (team_id) DO UPDATE
+               SET id = EXCLUDED.id, filename = EXCLUDED.filename,
+                   content_type = EXCLUDED.content_type, created_at = now()'''
+        ),
+        {'media': media_id, 'team': team_id, 'file': filename, 'type': content_type},
+    )
+    logo_url = f'/media/{media_id}'
+    await session.execute(
+        text('UPDATE teams SET logo_url = :url, updated_at = now() WHERE id = :id'),
+        {'url': logo_url, 'id': team_id},
+    )
+    return logo_url, old

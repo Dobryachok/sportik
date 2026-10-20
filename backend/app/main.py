@@ -507,6 +507,8 @@ async def register(payload: Credentials, request: Request, response: Response, s
             await session.execute(text('INSERT INTO user_roles(user_id,role_id) VALUES (:user,:role) ON CONFLICT DO NOTHING'),
                                   {'user': user_id, 'role': role_id})
         is_admin = await grant_configured_admin_role(session, user_id, payload.email)
+        from app.discovery.service import attach_pending_team_invites
+        await attach_pending_team_invites(session, int(user_id), payload.email)
         token = await create_login(session, user_id)
     result = self_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'admin' if is_admin else 'user', 'avatarUrl': None, 'bio': '', 'startCompleted': False})
     set_session(response, token)
@@ -751,6 +753,8 @@ async def media(media_id: str, session: AsyncSession = Depends(db_session)):
     if not media_id.isalnum() or len(media_id) > 64:
         raise HTTPException(404, 'Media not found')
     item = (await session.execute(text('SELECT filename,content_type FROM user_avatars WHERE id=:id'), {'id': media_id})).mappings().first()
+    if not item and await table_exists(session, 'team_avatars'):
+        item = (await session.execute(text('SELECT filename,content_type FROM team_avatars WHERE id=:id'), {'id': media_id})).mappings().first()
     if not item:
         raise HTTPException(404, 'Media not found')
     path = settings.upload_dir / item['filename']
@@ -793,6 +797,32 @@ async def user_profile(user_id: str, request: Request, session: AsyncSession = D
         if exc.status_code != 401:
             raise
     return await find_public_user(session, user_id, viewer['db_id'] if viewer else None)
+
+
+@app.get('/api/v1/profile/followers')
+async def profile_followers(user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    items = await rows(session, '''SELECT u.public_id AS id,u.name,u.avatar_url AS "avatarUrl",COALESCE(u.city,'') AS city,
+        f.created_at AS "followedAt"
+        FROM user_follows f JOIN users u ON u.id=f.follower_id
+        WHERE f.followed_id=:user AND u.status='ACTIVE'
+        ORDER BY f.created_at DESC,u.name''', {'user': user['db_id']})
+    for item in items:
+        if item.get('followedAt'):
+            item['followedAt'] = timestamp(item['followedAt'])
+    return items
+
+
+@app.get('/api/v1/profile/following')
+async def profile_following(user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    items = await rows(session, '''SELECT u.public_id AS id,u.name,u.avatar_url AS "avatarUrl",COALESCE(u.city,'') AS city,
+        f.created_at AS "followedAt"
+        FROM user_follows f JOIN users u ON u.id=f.followed_id
+        WHERE f.follower_id=:user AND u.status='ACTIVE'
+        ORDER BY f.created_at DESC,u.name''', {'user': user['db_id']})
+    for item in items:
+        if item.get('followedAt'):
+            item['followedAt'] = timestamp(item['followedAt'])
+    return items
 
 
 @app.post('/api/v1/users/{user_id}/follow')
@@ -865,6 +895,34 @@ async def event_rows_by_public_ids(session, public_ids: list[str], public_only=T
     return events
 
 
+async def approved_sports_catalog(session: AsyncSession, event_public_ids: list[str]) -> list[dict]:
+    sport_columns = await table_columns(session, 'sports')
+    if 'status' not in sport_columns:
+        return await rows(session, '''SELECT s.public_id AS id,s.name,s.slug,0::integer AS "eventCount"
+            FROM sports s ORDER BY s.name,s.id''')
+    ids = event_public_ids if event_public_ids else ['__no_events__']
+    return await rows(session, '''SELECT s.public_id AS id,s.name,s.slug,
+        COALESCE(cnt.c, 0)::integer AS "eventCount"
+        FROM sports s
+        LEFT JOIN (
+            SELECT e.sport_id, count(*)::integer AS c FROM events e
+            WHERE e.status='PUBLISHED' AND e.public_id = ANY(:ids)
+            GROUP BY e.sport_id
+        ) cnt ON cnt.sport_id = s.id
+        WHERE s.status='APPROVED'
+        ORDER BY s.name,s.id''', {'ids': ids})
+
+
+async def resolve_approved_sport_id(session: AsyncSession, sport_ref: str) -> int | None:
+    sport_columns = await table_columns(session, 'sports')
+    status_sql = " AND status='APPROVED'" if 'status' in sport_columns else ''
+    return await session.scalar(
+        text(f'''SELECT id FROM sports WHERE (
+            lower(name)=lower(:ref) OR public_id=:ref OR slug=:ref){status_sql} LIMIT 1'''),
+        {'ref': sport_ref.strip()},
+    )
+
+
 async def notification_rows(session: AsyncSession, user_id: int):
     notification_columns = await table_columns(session, 'notifications')
     has_teams = await table_exists(session, 'teams')
@@ -884,9 +942,17 @@ async def notification_rows(session: AsyncSession, user_id: int):
         't.public_id AS "teamPublicId"'
         if has_teams and 'team_id' in notification_columns else 'NULL::varchar(80) AS "teamPublicId"'
     )
+    actor_public_sql = (
+        'actor.public_id AS "actorPublicId"'
+        if 'actor_user_id' in notification_columns else 'NULL::varchar(80) AS "actorPublicId"'
+    )
     teams_join_sql = (
         'LEFT JOIN teams t ON t.id=n.team_id'
         if has_teams and 'team_id' in notification_columns else ''
+    )
+    actor_join_sql = (
+        'LEFT JOIN users actor ON actor.id=n.actor_user_id'
+        if 'actor_user_id' in notification_columns else ''
     )
     dismissed_filter = (
         'n.dismissed_at IS NULL'
@@ -895,9 +961,9 @@ async def notification_rows(session: AsyncSession, user_id: int):
     items = await rows(session, f'''SELECT 'n-' || n.id AS id,n.type,n.title,n.message AS body,n.is_read AS "isRead",
        n.created_at AS "createdAt",e.public_id AS "eventId",o.public_id AS "organizationId",s.name AS "eventTag",e.start_at AS "eventStart",
        {target_type_sql},{target_public_sql},{team_request_sql},
-       {team_public_sql}
+       {team_public_sql},{actor_public_sql}
        FROM notifications n LEFT JOIN events e ON e.id=n.event_id LEFT JOIN organizations o ON o.id=n.organization_id
-       LEFT JOIN sports s ON s.id=e.sport_id {teams_join_sql}
+       LEFT JOIN sports s ON s.id=e.sport_id {teams_join_sql} {actor_join_sql}
        WHERE n.user_id=:user AND {dismissed_filter} ORDER BY n.created_at DESC,n.id DESC''', {'user': user_id})
     for item in items:
         item['createdAt'] = timestamp(item['createdAt'])
@@ -906,9 +972,12 @@ async def notification_rows(session: AsyncSession, user_id: int):
         else:
             item.pop('eventStart', None)
         ntype = item.get('type') or ''
-        if ntype == 'DISCOVERY_LIKE' and item.get('targetPublicId'):
-            item['linkUrl'] = f"/discovery?mode=users&user={item['targetPublicId']}"
-            item['linkText'] = 'Открыть Discovery'
+        if ntype == 'DISCOVERY_LIKE' and item.get('actorPublicId'):
+            item['linkUrl'] = f"/users/{item['actorPublicId']}"
+            item['linkText'] = 'Посмотреть профиль'
+        elif ntype == 'TEAM_INVITE' and item.get('teamPublicId'):
+            item['linkUrl'] = f"/teams/{item['teamPublicId']}"
+            item['linkText'] = 'Открыть команду'
         elif ntype == 'TEAM_JOIN_REQUEST' and item.get('teamRequestId'):
             item['linkUrl'] = f"/discovery?mode=teams&request={item['teamRequestId']}"
             item['linkText'] = 'Посмотреть заявку'
@@ -931,6 +1000,7 @@ async def notification_rows(session: AsyncSession, user_id: int):
         item.pop('targetPublicId', None)
         item.pop('teamRequestId', None)
         item.pop('teamPublicId', None)
+        item.pop('actorPublicId', None)
     return items
 
 
@@ -954,8 +1024,9 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
     event_ids = [e['id'] for e in events]
     if not event_ids:
         notifications = await notification_rows(session, user['db_id']) if user else []
+        sports = await approved_sports_catalog(session, [])
         return dict(version=1, currentUserId=user['id'] if user else None, accounts=[], city=selected_city,
-                    users=[public_user(user)] if user else [], organizations=[], sports=[], events=[], participations=[],
+                    users=[public_user(user)] if user else [], organizations=[], sports=sports, events=[], participations=[],
                     comments=[], notifications=notifications, favorites=favorites, likedEvents=liked)
     params = {'ids': event_ids, 'user_id': user['db_id'] if user else -1}
     profile_columns = await table_columns(session, 'user_profiles')
@@ -976,11 +1047,7 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
        owner.public_id AS "ownerUserId" FROM organizations o JOIN events e ON e.organization_id=o.id
        LEFT JOIN organization_members m ON m.organization_id=o.id AND m.role='OWNER' LEFT JOIN users owner ON owner.id=m.user_id
        WHERE e.public_id=ANY(:ids) ORDER BY o.public_id''', params)
-    sport_columns = await table_columns(session, 'sports')
-    approved_sports_filter = "s.status='APPROVED'" if 'status' in sport_columns else 'TRUE'
-    sports = await rows(session, f'''SELECT s.public_id AS id,s.name,s.slug,count(e.id)::integer AS "eventCount" FROM sports s
-       JOIN events e ON e.sport_id=s.id AND e.status='PUBLISHED' AND e.public_id=ANY(:ids)
-       WHERE {approved_sports_filter} GROUP BY s.id ORDER BY s.id''', params)
+    sports = await approved_sports_catalog(session, event_ids)
     comment_columns = await table_columns(session, 'event_comments')
     comment_kind_sql = 'c.kind' if 'kind' in comment_columns else "'MESSAGE' AS kind"
     comments = await rows(session, f'''SELECT 'c-' || c.id AS id,e.public_id AS "eventId",u.public_id AS "authorId",c.text,{comment_kind_sql},c.created_at AS "createdAt"
@@ -1404,7 +1471,7 @@ async def create_event(payload: EventInput, user=Depends(require_user), session:
         raise HTTPException(422, 'city is required')
     await session.commit()
     async with session.begin():
-        sport = await session.scalar(text("SELECT id FROM sports WHERE lower(name)=lower(:name) AND status='APPROVED'"), {'name': payload.sportName})
+        sport = await resolve_approved_sport_id(session, payload.sportName)
         if sport is None:
             raise HTTPException(422, 'Choose an approved sport or submit a sport request for moderation')
         organization = await approved_owned_organization(session, payload.organizationId, user['db_id']) if payload.organizationId else None
@@ -1455,8 +1522,7 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
                                          {'id': event['id']})
         if confirmed > payload.capacity:
             raise HTTPException(409, 'Capacity cannot be below confirmed registrations')
-        sport = await session.scalar(text("SELECT id FROM sports WHERE lower(name)=lower(:name) AND status='APPROVED'"),
-                                     {'name': payload.sportName})
+        sport = await resolve_approved_sport_id(session, payload.sportName)
         if sport is None:
             raise HTTPException(422, 'Choose an approved sport or submit a sport request for moderation')
         organization = await approved_owned_organization(session, payload.organizationId, user['db_id']) if payload.organizationId else None

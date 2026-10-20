@@ -16,7 +16,7 @@ const eventTypes: Array<{ value: NonNullable<Event['eventType']>; label: string 
 ]
 
 export function CreateEventPage() {
-  const { state, city, addNewEvent } = useAppData()
+  const { state, city, addNewEvent, refresh } = useAppData()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const requestedSport = state.sports.find((sport) => sport.id === searchParams.get('sport') || sport.slug === searchParams.get('sport'))
@@ -42,6 +42,10 @@ export function CreateEventPage() {
   const [level, setLevel] = useState(2)
   const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
   const [organizationId, setOrganizationId] = useState(searchParams.get('organization') ?? '')
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
 
   useEffect(() => {
     let cancelled = false
@@ -70,7 +74,8 @@ export function CreateEventPage() {
     try {
       await requestSport(name)
       setSportRequestName('')
-      setSportRequestStatus('Заявка отправлена администратору. После одобрения вид спорта появится в списке.')
+      await refresh()
+      setSportRequestStatus('Заявка отправлена администратору. После одобрения вид спорта появится в списке — обновите страницу, если его нет.')
     } catch (cause) {
       setSportRequestStatus(cause instanceof Error ? cause.message : 'Не удалось отправить заявку.')
     } finally {

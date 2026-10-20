@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,13 +22,22 @@ class TeamCreateBody(BaseModel):
     description: str | None = Field(default=None, max_length=5000)
 
 
+class TeamInviteBody(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
 def register(app):
     from app.main import db_session, require_user, restart_redis_cache
 
     async def notify_user_like(session: AsyncSession, actor_id: int, target_id: int, target_public_id: str):
-        actor_name = await session.scalar(
-            text('SELECT name FROM users WHERE id = :id'), {'id': actor_id}
-        )
+        actor_row = (
+            await session.execute(
+                text('SELECT name, public_id FROM users WHERE id = :id'),
+                {'id': actor_id},
+            )
+        ).mappings().first()
+        actor_name = actor_row['name'] if actor_row else 'Пользователь'
+        actor_public_id = actor_row['public_id'] if actor_row else target_public_id
         await session.execute(
             text(
                 '''INSERT INTO notifications(
@@ -40,7 +51,7 @@ def register(app):
                 'title': 'Новый интерес к профилю',
                 'message': f'❤️ {actor_name} заинтересовался(-ась) вашим профилем',
                 'actor': actor_id,
-                'public_id': target_public_id,
+                'public_id': actor_public_id,
             },
         )
 
@@ -73,6 +84,38 @@ def register(app):
                     'team_public': team_public_id,
                     'team': team_db_id,
                     'request': request_id,
+                },
+            )
+
+    async def notify_team_email_invite(
+        session: AsyncSession,
+        manager_id: int,
+        team_db_id: int,
+        team_public_id: str,
+        email: str,
+        invite_id: int,
+        invitee: dict | None,
+    ):
+        team_name = await session.scalar(text('SELECT name FROM teams WHERE id = :id'), {'id': team_db_id})
+        manager_name = await session.scalar(text('SELECT name FROM users WHERE id = :id'), {'id': manager_id})
+        if invitee:
+            await session.execute(
+                text(
+                    '''INSERT INTO notifications(
+                        user_id, type, title, message, actor_user_id,
+                        target_type, target_public_id, team_id
+                    ) VALUES (
+                        :user, 'TEAM_INVITE', :title, :message, :actor,
+                        'TEAM', :public_id, :team
+                    )'''
+                ),
+                {
+                    'user': invitee['id'],
+                    'title': 'Приглашение в команду',
+                    'message': f'👥 {manager_name} пригласил(а) вас в команду «{team_name}».',
+                    'actor': manager_id,
+                    'public_id': team_public_id,
+                    'team': team_db_id,
                 },
             )
 
@@ -221,6 +264,70 @@ def register(app):
     @router.get('/profile/memberships')
     async def memberships(user=Depends(require_user), session: AsyncSession = Depends(db_session)):
         return await service.profile_memberships(session, user['db_id'])
+
+    @router.get('/profile/team-invites')
+    async def team_invites(user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+        return await service.list_pending_team_invites(session, user['db_id'])
+
+    @router.post('/teams/invites/{invite_id}/accept')
+    async def accept_team_invite(invite_id: int, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+        await session.commit()
+        async with session.begin():
+            result = await service.accept_team_email_invite(session, invite_id, user['db_id'])
+        await restart_redis_cache()
+        return result
+
+    @router.post('/teams/{team_id}/invites')
+    async def invite_to_team(
+        team_id: str,
+        payload: TeamInviteBody,
+        user=Depends(require_user),
+        session: AsyncSession = Depends(db_session),
+    ):
+        await session.commit()
+        async with session.begin():
+            result = await service.invite_team_by_email(
+                session, team_id, user['db_id'], payload.email, notify_team_email_invite
+            )
+        await restart_redis_cache()
+        return result
+
+    @router.post('/teams/{team_id}/logo')
+    async def upload_team_logo(
+        team_id: str,
+        file: UploadFile = File(...),
+        user=Depends(require_user),
+        session: AsyncSession = Depends(db_session),
+    ):
+        from app.main import image_extension, settings
+
+        data = await file.read(settings.max_avatar_bytes + 1)
+        kind = image_extension(data)
+        if len(data) > settings.max_avatar_bytes or not kind:
+            from fastapi import HTTPException
+
+            raise HTTPException(422, 'Logo must be a JPEG, PNG, or WebP image up to 5 MB')
+        extension, content_type = kind
+        media_id = uuid4().hex
+        filename = media_id + extension
+        path = settings.upload_dir / filename
+        path.write_bytes(data)
+        try:
+            await session.commit()
+            async with session.begin():
+                logo_url, old = await service.upload_team_logo(
+                    session, team_id, user['db_id'], media_id, filename, content_type
+                )
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        if old:
+            try:
+                (settings.upload_dir / old).unlink(missing_ok=True)
+            except OSError:
+                pass
+        await restart_redis_cache()
+        return {'logoUrl': logo_url}
 
     @router.post('/teams')
     async def create_team_route(

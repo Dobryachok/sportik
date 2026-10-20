@@ -60,6 +60,10 @@ export const suggestAddresses = (query: string, city?: string, signal?: AbortSig
 export const fetchEvent = (eventId: string) => request<Event>(`/events/${encodeURIComponent(eventId)}`)
 export const fetchUser = (userId: string) => request<User>(`/users/${encodeURIComponent(userId)}`)
 export const toggleUserFollow = (userId: string) => request<{ active: boolean }>(`/users/${encodeURIComponent(userId)}/follow`, { method: 'POST' })
+export const fetchFollowers = () =>
+  request<Array<{ id: string; name: string; avatarUrl?: string; city: string }>>('/profile/followers')
+export const fetchFollowing = () =>
+  request<Array<{ id: string; name: string; avatarUrl?: string; city: string }>>('/profile/following')
 export const requestSport = (name: string) => request<{ id: string; status: 'pending' }>('/sports/requests', { method: 'POST', body: JSON.stringify({ name }) })
 export interface PendingSport { id: string; name: string; slug: string; createdAt: string; requestedById?: string; requestedByName?: string }
 

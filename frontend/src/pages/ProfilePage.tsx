@@ -1,9 +1,11 @@
 import { ArrowLeft, Camera, Link2, LogOut, MapPin, Pencil, Plus, Search, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { createTeam, fetchProfileMemberships } from '../api/discovery'
+import { acceptTeamEmailInvite, createTeam, fetchProfileMemberships, fetchTeamEmailInvites } from '../api/discovery'
 import { useAppData } from '../app/AppDataContext'
-import type { ProfileMemberships } from '../data/discoveryTypes'
+import type { FollowPreview, ProfileMemberships, ProfileMembershipTeam, TeamEmailInvite } from '../data/discoveryTypes'
+import { fetchFollowers, fetchFollowing } from '../data/api'
+import { FollowListModal } from '../components/FollowListModal'
 import { PrimaryButton } from '../components/PrimaryButton'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { GENDER_OPTIONS, INTEREST_CATALOG, genderLabel } from '../data/interestCatalog'
@@ -18,6 +20,13 @@ const maritalOptions = [
 
 function optionalValue(value: string | null | undefined) {
   return value?.trim() || 'Не выбрано'
+}
+
+function membershipStatusLabel(team: ProfileMembershipTeam) {
+  if (team.membershipStatus === 'pending') return 'Заявка на рассмотрении'
+  if (team.role === 'CAPTAIN') return 'Капитан'
+  if (team.role === 'ADMIN') return 'Администратор'
+  return 'Участник'
 }
 
 export function ProfilePage() {
@@ -46,12 +55,41 @@ export function ProfilePage() {
   const [teamDescription, setTeamDescription] = useState('')
   const [teamBusy, setTeamBusy] = useState(false)
   const [teamError, setTeamError] = useState('')
+  const [followersOpen, setFollowersOpen] = useState(false)
+  const [followingOpen, setFollowingOpen] = useState(false)
+  const [followers, setFollowers] = useState<FollowPreview[]>([])
+  const [following, setFollowing] = useState<FollowPreview[]>([])
+  const [followLoading, setFollowLoading] = useState(false)
+  const [teamInvites, setTeamInvites] = useState<TeamEmailInvite[]>([])
 
-  useEffect(() => {
+  const loadMemberships = () => {
     void fetchProfileMemberships()
       .then(setMemberships)
       .catch(() => setMemberships({ teams: [], groups: [] }))
+  }
+
+  useEffect(() => {
+    loadMemberships()
+    void fetchTeamEmailInvites().then(setTeamInvites).catch(() => setTeamInvites([]))
   }, [])
+
+  const openFollowers = () => {
+    setFollowersOpen(true)
+    setFollowLoading(true)
+    void fetchFollowers()
+      .then(setFollowers)
+      .catch(() => setFollowers([]))
+      .finally(() => setFollowLoading(false))
+  }
+
+  const openFollowing = () => {
+    setFollowingOpen(true)
+    setFollowLoading(true)
+    void fetchFollowing()
+      .then(setFollowing)
+      .catch(() => setFollowing([]))
+      .finally(() => setFollowLoading(false))
+  }
 
   if (!currentUser) return null
 
@@ -192,14 +230,14 @@ export function ProfilePage() {
               <p className="text-2xl font-bold text-accent">{stats.events}</p>
               <p className="mt-1 text-sm text-muted">событий</p>
             </div>
-            <div>
+            <button type="button" onClick={openFollowing} className="text-center transition-opacity hover:opacity-85">
               <p className="text-2xl font-bold text-accent">{stats.subscriptions}</p>
               <p className="mt-1 text-sm text-muted">подписок</p>
-            </div>
-            <div>
+            </button>
+            <button type="button" onClick={openFollowers} className="text-center transition-opacity hover:opacity-85">
               <p className="text-2xl font-bold text-accent">{stats.followers}</p>
               <p className="mt-1 text-sm text-muted">подписчиков</p>
-            </div>
+            </button>
           </div>
         )}
       </section>
@@ -338,11 +376,53 @@ export function ProfilePage() {
                 {teamFormOpen ? 'Скрыть' : 'Создать команду'}
               </button>
             </div>
+            {teamInvites.length > 0 && (
+              <div className="mt-3 space-y-2 rounded-xl border border-accent/25 bg-accent/5 p-3">
+                <p className="text-sm font-semibold text-white">Приглашения в команды</p>
+                {teamInvites.map((invite) => (
+                  <div key={invite.inviteId} className="flex flex-col gap-2 rounded-lg border border-white/10 bg-card/80 p-3 sm:flex-row sm:items-center">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      {invite.logoUrl ? (
+                        <img src={invite.logoUrl} alt="" className="h-10 w-10 rounded-xl object-cover" />
+                      ) : (
+                        <span className="text-xl">🏆</span>
+                      )}
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-white">{invite.teamName}</p>
+                        <p className="text-xs text-muted">от {invite.invitedByName}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void acceptTeamEmailInvite(invite.inviteId)
+                          .then(() => {
+                            setTeamInvites((items) => items.filter((item) => item.inviteId !== invite.inviteId))
+                            loadMemberships()
+                          })
+                          .catch(() => undefined)
+                      }}
+                      className="min-h-10 rounded-xl bg-accent px-4 text-sm font-bold text-white"
+                    >
+                      Принять
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="mt-3 space-y-2">
               {(memberships?.teams ?? []).map((team) => (
-                <Link key={team.id} to={`/teams/${team.id}`} className="flex items-center justify-between rounded-xl border border-white/10 px-3 py-2.5 text-sm">
-                  <span className="font-semibold text-white">🏆 {team.name}</span>
-                  <span className="text-muted">{team.role === 'CAPTAIN' ? 'Капитан' : team.role}</span>
+                <Link key={`${team.id}-${team.membershipStatus ?? 'member'}`} to={`/teams/${team.id}`} className="flex items-center gap-3 rounded-xl border border-white/10 px-3 py-2.5 text-sm">
+                  {team.logoUrl ? (
+                    <img src={team.logoUrl} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" />
+                  ) : (
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-lg">🏆</span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-semibold text-white">{team.name}</p>
+                    <p className="text-xs text-muted">{team.sport}</p>
+                  </div>
+                  <span className="shrink-0 text-right text-xs text-muted">{membershipStatusLabel(team)}</span>
                 </Link>
               ))}
               {(memberships?.groups ?? []).map((group) => (
@@ -374,7 +454,10 @@ export function ProfilePage() {
                       setTeamFormOpen(false)
                       return fetchProfileMemberships()
                     })
-                    .then(setMemberships)
+                    .then((data) => {
+                      setMemberships(data)
+                      return data
+                    })
                     .catch((err) => setTeamError(err instanceof Error ? err.message : 'Не удалось создать команду.'))
                     .finally(() => setTeamBusy(false))
                 }}
@@ -423,6 +506,8 @@ export function ProfilePage() {
       >
         <LogOut size={17} /> Выйти из аккаунта
       </button>
+      <FollowListModal title="Подписчики" open={followersOpen} items={followers} loading={followLoading} onClose={() => setFollowersOpen(false)} />
+      <FollowListModal title="Подписки" open={followingOpen} items={following} loading={followLoading} onClose={() => setFollowingOpen(false)} />
     </div>
   )
 }

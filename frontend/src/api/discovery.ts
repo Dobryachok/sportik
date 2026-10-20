@@ -1,5 +1,11 @@
 import { request } from '../data/api'
-import type { DiscoveryTeamCard, DiscoveryUserCard, ProfileMemberships } from '../data/discoveryTypes'
+import type {
+  DiscoveryTeamCard,
+  DiscoveryUserCard,
+  ProfileMemberships,
+  TeamEmailInvite,
+  TeamJoinRequestRow,
+} from '../data/discoveryTypes'
 
 export interface DiscoveryListResponse<T> {
   items: T[]
@@ -59,3 +65,23 @@ export const rejectJoinRequest = (teamId: string, requestId: number) =>
     `/teams/${encodeURIComponent(teamId)}/join-requests/${requestId}/reject`,
     { method: 'POST', body: JSON.stringify({}) },
   )
+
+export const fetchTeamJoinRequests = (teamId: string) =>
+  request<TeamJoinRequestRow[]>(`/teams/${encodeURIComponent(teamId)}/join-requests`)
+
+export const inviteTeamByEmail = (teamId: string, email: string) =>
+  request<{ ok: boolean; inviteId: number; userFound: boolean }>(
+    `/teams/${encodeURIComponent(teamId)}/invites`,
+    { method: 'POST', body: JSON.stringify({ email }) },
+  )
+
+export const fetchTeamEmailInvites = () => request<TeamEmailInvite[]>('/profile/team-invites')
+
+export const acceptTeamEmailInvite = (inviteId: number) =>
+  request<{ status: string; teamId: string }>(`/teams/invites/${inviteId}/accept`, { method: 'POST' })
+
+export const uploadTeamLogo = (teamId: string, file: File) => {
+  const body = new FormData()
+  body.append('file', file)
+  return request<{ logoUrl: string }>(`/teams/${encodeURIComponent(teamId)}/logo`, { method: 'POST', body })
+}
