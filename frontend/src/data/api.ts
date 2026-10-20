@@ -1,4 +1,4 @@
-import type { AppState, Comment, Event, LocationSuggestion, User } from './types'
+import type { AppState, Comment, Event, LocationSuggestion, SocialLink, User } from './types'
 import type { CreateEventInput } from './selectors'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
@@ -49,7 +49,27 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 
 export const fetchState = (city?: string) => request<AppState>(`/state${city ? `?city=${encodeURIComponent(city)}` : ''}`)
 export const fetchMe = () => request<User | null>('/auth/me')
-export const register = (input: { email: string; password: string; name: string }) => request<User>('/auth/register', { method: 'POST', body: JSON.stringify(input) })
+export interface OrganizationApplicationInput {
+  name: string
+  description: string
+  city: string
+  address?: string
+  latitude?: number
+  longitude?: number
+  email?: string
+  phone?: string
+  website?: string
+  socialLinks?: SocialLink[]
+  comment?: string
+}
+
+export const register = (input: {
+  email: string
+  password: string
+  name: string
+  accountType?: 'user' | 'organization'
+  organization?: OrganizationApplicationInput
+}) => request<User>('/auth/register', { method: 'POST', body: JSON.stringify(input) })
 export const login = (input: { email: string; password: string }) => request<User>('/auth/login', { method: 'POST', body: JSON.stringify(input) })
 export const logout = () => request<void>('/auth/logout', { method: 'POST' })
 export const updateProfile = (input: Partial<Pick<User, 'name' | 'bio' | 'city' | 'birthDate' | 'maritalStatus' | 'gender' | 'hasCar' | 'workSchedule' | 'socialLinks' | 'interests'>>) => request<User>('/profile', { method: 'PATCH', body: JSON.stringify(input) })
@@ -74,25 +94,15 @@ export interface AdminSportCatalogItem {
   backgroundImage?: string | null
 }
 
-export interface OrganizationApplicationInput {
-  name: string
-  description: string
-  city: string
-  latitude: number
-  longitude: number
-  email?: string
-  phone?: string
-  website?: string
-  comment?: string
-}
-
 export interface OwnedOrganization {
   id: string
   name: string
   description: string
   city: string
-  latitude: number
-  longitude: number
+  address?: string
+  latitude?: number | null
+  longitude?: number | null
+  socialLinks?: SocialLink[]
   email?: string | null
   phone?: string | null
   website?: string | null
@@ -115,8 +125,10 @@ export interface PublicOrganization {
   name: string
   description: string
   city: string
-  latitude: number
-  longitude: number
+  address?: string
+  latitude?: number | null
+  longitude?: number | null
+  socialLinks?: SocialLink[]
   email?: string | null
   phone?: string | null
   website?: string | null

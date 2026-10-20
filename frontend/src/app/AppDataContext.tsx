@@ -1,12 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { addComment, completeStartQuest as completeStartRequest, createEvent, dismissNotification as dismissNotificationRequest, fetchComments, fetchEvent, fetchMe, fetchState, joinEvent, leaveEvent, login as loginRequest, logout as logoutRequest, register as registerRequest, reviewParticipation, toggleFavorite, toggleLike, updateEvent, updateProfile, uploadAvatar } from '../data/api'
+import { addComment, completeStartQuest as completeStartRequest, createEvent, dismissNotification as dismissNotificationRequest, fetchComments, fetchEvent, fetchMe, fetchState, joinEvent, leaveEvent, login as loginRequest, logout as logoutRequest, register as registerRequest, reviewParticipation, toggleFavorite, toggleLike, updateEvent, updateProfile, uploadAvatar, type OrganizationApplicationInput } from '../data/api'
 import type { CreateEventInput } from '../data/selectors'
 import type { AppState, Comment, Event, User } from '../data/types'
 
 interface AppDataContextValue {
   state: AppState; currentUser: User | null; loading: boolean; error: string | null; city: string
   refresh: () => Promise<boolean>; setCity: (city: string, persist?: boolean) => Promise<boolean>
-  signIn: (email: string, password: string) => Promise<boolean>; signUp: (name: string, email: string, password: string) => Promise<boolean>; signOut: () => Promise<void>
+  signIn: (email: string, password: string) => Promise<boolean>; signUp: (name: string, email: string, password: string, accountType?: 'user' | 'organization', organization?: OrganizationApplicationInput) => Promise<boolean>; signOut: () => Promise<void>
   saveProfile: (input: Partial<Pick<User, 'name' | 'bio' | 'city' | 'birthDate' | 'maritalStatus' | 'gender' | 'hasCar' | 'workSchedule' | 'socialLinks' | 'interests'>>) => Promise<boolean>; completeStart: () => Promise<boolean>; changeAvatar: (file: File) => Promise<boolean>
   favorite: (eventId: string) => Promise<boolean>; like: (eventId: string) => Promise<boolean>; participate: (eventId: string) => Promise<boolean>; leave: (eventId: string) => Promise<boolean>; postComment: (eventId: string, text: string) => Promise<boolean>; refreshComments: (eventId: string) => Promise<void>; mergeComment: (comment: Comment) => void; dismissNotification: (notificationId: string) => Promise<boolean>; review: (participationId: string, status: 'confirmed' | 'rejected') => Promise<boolean>; addNewEvent: (input: CreateEventInput) => Promise<boolean>; editEvent: (eventId: string, input: CreateEventInput) => Promise<boolean>
 }
@@ -47,7 +47,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [currentUser, load])
   const runMutation = useCallback(async (action: () => Promise<unknown>) => { try { setError(null); await action(); return await refresh() } catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось сохранить изменения.'); return false } }, [refresh])
   const signIn = useCallback(async (email: string, password: string) => { try { setError(null); const user = await loginRequest({ email, password }); const selected = user.city || city; setCityState(selected); try { localStorage.setItem(cityStorageKey, selected) } catch {} await load(selected, user); return true } catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось войти.'); return false } }, [city, load])
-  const signUp = useCallback(async (name: string, email: string, password: string) => { try { setError(null); const user = await registerRequest({ name, email, password }); await load(city, user); return true } catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось создать аккаунт.'); return false } }, [city, load])
+  const signUp = useCallback(async (name: string, email: string, password: string, accountType: 'user' | 'organization' = 'user', organization?: OrganizationApplicationInput) => {
+    try {
+      setError(null)
+      const user = await registerRequest({ name, email, password, accountType, organization })
+      await load(city, user)
+      return true
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось создать аккаунт.')
+      return false
+    }
+  }, [city, load])
   const signOut = useCallback(async () => { try { await logoutRequest() } finally { setCurrentUser(null); await load(city, null) } }, [city, load])
   const saveProfile = useCallback(async (input: Partial<Pick<User, 'name' | 'bio' | 'city' | 'birthDate' | 'maritalStatus' | 'gender' | 'hasCar' | 'workSchedule' | 'socialLinks' | 'interests'>>) => { try { const user = await updateProfile(input); setCurrentUser(user); if (input.city !== undefined) { setCityState(user.city); try { localStorage.setItem(cityStorageKey, user.city) } catch {} } await load(input.city ?? city, user); return true } catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось сохранить профиль.'); return false } }, [city, load])
   const completeStart = useCallback(async () => {

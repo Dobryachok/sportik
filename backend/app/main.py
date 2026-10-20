@@ -463,6 +463,74 @@ class Credentials(BaseModel):
         return value.strip() if value else value
 
 
+class SocialLinkInput(BaseModel):
+    platform: str = Field(min_length=1, max_length=40)
+    url: str = Field(min_length=8, max_length=500)
+    label: str | None = Field(default=None, max_length=80)
+
+    @field_validator('platform', 'label')
+    @classmethod
+    def clean_text(cls, value):
+        return value.strip() if value is not None else value
+
+    @field_validator('url')
+    @classmethod
+    def valid_link(cls, value):
+        parsed = urlsplit(value.strip())
+        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
+            raise ValueError('Social link must be an http(s) URL')
+        return value.strip()
+
+
+class OrganizationApplicationInput(BaseModel):
+    name: str = Field(min_length=2, max_length=255)
+    description: str = Field(default='', max_length=10000)
+    city: str = Field(min_length=1, max_length=150)
+    address: str | None = Field(default=None, max_length=500)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=50)
+    website: str | None = Field(default=None, max_length=500)
+    socialLinks: list[SocialLinkInput] | None = Field(default=None, max_length=5)
+    comment: str = Field(default='', max_length=4000)
+
+    @field_validator('name', 'city', 'description', 'phone', 'website', 'comment', 'address')
+    @classmethod
+    def clean_organization_text(cls, value):
+        return value.strip() if value is not None else value
+
+    @field_validator('website')
+    @classmethod
+    def organization_website(cls, value):
+        if not value:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
+            raise ValueError('Website must be an http(s) URL')
+        return value
+
+    @field_validator('latitude', 'longitude', mode='before')
+    @classmethod
+    def empty_coords_to_none(cls, value):
+        return None if value == '' else value
+
+
+class RegisterInput(Credentials):
+    accountType: str = Field(default='user', pattern='^(user|organization)$')
+    organization: OrganizationApplicationInput | None = None
+
+    @field_validator('organization')
+    @classmethod
+    def organization_only_for_org_account(cls, value, info):
+        account_type = info.data.get('accountType', 'user')
+        if account_type == 'organization' and value is None:
+            raise ValueError('Organization details are required')
+        if account_type != 'organization':
+            return None
+        return value
+
+
 async def throttle_auth(email: str, action: str, limit: int):
     key = 'auth:attempts:' + action + ':' + hashlib.sha256(email.encode()).hexdigest()
     try:
@@ -497,7 +565,7 @@ async def grant_configured_admin_role(session: AsyncSession, user_id: int, email
 
 
 @app.post('/api/v1/auth/register', status_code=status.HTTP_201_CREATED)
-async def register(payload: Credentials, request: Request, response: Response, session: AsyncSession = Depends(db_session)):
+async def register(payload: RegisterInput, request: Request, response: Response, session: AsyncSession = Depends(db_session)):
     await throttle_auth(payload.email, 'register', 5)
     if not payload.name:
         raise HTTPException(422, 'Name is required')
@@ -518,6 +586,11 @@ async def register(payload: Credentials, request: Request, response: Response, s
         is_admin = await grant_configured_admin_role(session, user_id, payload.email)
         from app.discovery.service import attach_pending_team_invites
         await attach_pending_team_invites(session, int(user_id), payload.email)
+        if payload.accountType == 'organization' and payload.organization:
+            org_payload = payload.organization
+            if not org_payload.email:
+                org_payload = org_payload.model_copy(update={'email': payload.email})
+            await create_organization_application(session, int(user_id), org_payload)
         token = await create_login(session, user_id)
     result = self_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'admin' if is_admin else 'user', 'avatarUrl': None, 'bio': '', 'startCompleted': False})
     set_session(response, token)
@@ -575,25 +648,6 @@ async def me(request: Request, session: AsyncSession = Depends(db_session)):
         if exc.status_code == 401:
             return None
         raise
-
-
-class SocialLinkInput(BaseModel):
-    platform: str = Field(min_length=1, max_length=40)
-    url: str = Field(min_length=8, max_length=500)
-    label: str | None = Field(default=None, max_length=80)
-
-    @field_validator('platform', 'label')
-    @classmethod
-    def clean_text(cls, value):
-        return value.strip() if value is not None else value
-
-    @field_validator('url')
-    @classmethod
-    def valid_link(cls, value):
-        parsed = urlsplit(value.strip())
-        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
-            raise ValueError('Social link must be an http(s) URL')
-        return value.strip()
 
 
 class ProfileInput(BaseModel):
@@ -1174,33 +1228,6 @@ async def dismiss_notification(notification_id: str, user=Depends(require_user),
     await restart_redis_cache()
 
 
-class OrganizationApplicationInput(BaseModel):
-    name: str = Field(min_length=2, max_length=255)
-    description: str = Field(default='', max_length=10000)
-    city: str = Field(min_length=1, max_length=150)
-    latitude: float = Field(ge=-90, le=90)
-    longitude: float = Field(ge=-180, le=180)
-    email: EmailStr | None = None
-    phone: str | None = Field(default=None, max_length=50)
-    website: str | None = Field(default=None, max_length=500)
-    comment: str = Field(default='', max_length=4000)
-
-    @field_validator('name', 'city', 'description', 'phone', 'website', 'comment')
-    @classmethod
-    def clean_organization_text(cls, value):
-        return value.strip() if value is not None else value
-
-    @field_validator('website')
-    @classmethod
-    def organization_website(cls, value):
-        if not value:
-            return value
-        parsed = urlsplit(value)
-        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
-            raise ValueError('Website must be an http(s) URL')
-        return value
-
-
 class OrganizationReviewInput(BaseModel):
     decision: str = Field(pattern='^(approved|rejected)$')
     comment: str = Field(default='', max_length=4000)
@@ -1580,36 +1607,57 @@ async def remove_approved_sport(sport_id: str, user=Depends(require_admin), sess
     return {'ok': True}
 
 
+def organization_row(item: dict) -> dict:
+    item['socialLinks'] = social_links(item.pop('socialLinks', item.get('social_links')))
+    if item.get('latitude') is not None:
+        item['latitude'] = float(item['latitude'])
+    if item.get('longitude') is not None:
+        item['longitude'] = float(item['longitude'])
+    return item
+
+
+async def create_organization_application(session: AsyncSession, user_db_id: int, payload: OrganizationApplicationInput) -> str:
+    has_pending = await session.scalar(text('''SELECT 1 FROM organization_members m
+        JOIN organizations o ON o.id=m.organization_id
+        WHERE m.user_id=:user AND m.role='OWNER' AND o.status='PENDING' '''), {'user': user_db_id})
+    if has_pending:
+        raise HTTPException(409, 'You already have an organization awaiting review')
+    organization_id = 'org-' + uuid4().hex[:12]
+    social_payload = json.dumps(
+        [link.model_dump() for link in (payload.socialLinks or [])],
+        ensure_ascii=False,
+    )
+    internal_id = await session.scalar(text('''INSERT INTO organizations(
+            public_id,name,description,city,address,latitude,longitude,email,phone,website,social_links,status)
+        VALUES (:id,:name,:description,:city,:address,:latitude,:longitude,:email,:phone,:website,:social::jsonb,'PENDING') RETURNING id'''), {
+            'id': organization_id, 'name': payload.name, 'description': payload.description, 'city': payload.city,
+            'address': payload.address or None,
+            'latitude': payload.latitude, 'longitude': payload.longitude,
+            'email': str(payload.email) if payload.email else None,
+            'phone': payload.phone or None, 'website': payload.website or None, 'social': social_payload,
+        })
+    await session.execute(text('''INSERT INTO organization_members(organization_id,user_id,role)
+        VALUES (:organization,:user,'OWNER')'''), {'organization': internal_id, 'user': user_db_id})
+    await session.execute(text('''INSERT INTO organization_applications(organization_id,submitted_by,status,comment)
+        VALUES (:organization,:user,'PENDING',:comment)'''), {
+            'organization': internal_id, 'user': user_db_id, 'comment': payload.comment,
+        })
+    admins = await rows(session, '''SELECT DISTINCT ur.user_id FROM user_roles ur
+        JOIN roles r ON r.id=ur.role_id WHERE r.name='ADMIN' ''')
+    for admin in admins:
+        await session.execute(text('''INSERT INTO notifications(user_id,organization_id,type,title,message)
+            VALUES (:user,:organization,'organization_review','Новая заявка организации',:message)'''), {
+                'user': admin['user_id'], 'organization': internal_id,
+                'message': f'Организация «{payload.name}» ожидает модерации.',
+            })
+    return organization_id
+
+
 @app.post('/api/v1/organizations/applications', status_code=status.HTTP_201_CREATED)
 async def request_organization(payload: OrganizationApplicationInput, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     await session.commit()
     async with session.begin():
-        has_pending = await session.scalar(text('''SELECT 1 FROM organization_members m
-            JOIN organizations o ON o.id=m.organization_id
-            WHERE m.user_id=:user AND m.role='OWNER' AND o.status='PENDING' '''), {'user': user['db_id']})
-        if has_pending:
-            raise HTTPException(409, 'You already have an organization awaiting review')
-        organization_id = 'org-' + uuid4().hex[:12]
-        internal_id = await session.scalar(text('''INSERT INTO organizations(public_id,name,description,city,latitude,longitude,email,phone,website,status)
-            VALUES (:id,:name,:description,:city,:latitude,:longitude,:email,:phone,:website,'PENDING') RETURNING id'''), {
-                'id': organization_id, 'name': payload.name, 'description': payload.description, 'city': payload.city,
-                'latitude': payload.latitude, 'longitude': payload.longitude, 'email': str(payload.email) if payload.email else None,
-                'phone': payload.phone or None, 'website': payload.website or None,
-            })
-        await session.execute(text('''INSERT INTO organization_members(organization_id,user_id,role)
-            VALUES (:organization,:user,'OWNER')'''), {'organization': internal_id, 'user': user['db_id']})
-        await session.execute(text('''INSERT INTO organization_applications(organization_id,submitted_by,status,comment)
-            VALUES (:organization,:user,'PENDING',:comment)'''), {
-                'organization': internal_id, 'user': user['db_id'], 'comment': payload.comment,
-            })
-        admins = await rows(session, '''SELECT DISTINCT ur.user_id FROM user_roles ur
-            JOIN roles r ON r.id=ur.role_id WHERE r.name='ADMIN' ''')
-        for admin in admins:
-            await session.execute(text('''INSERT INTO notifications(user_id,organization_id,type,title,message)
-                VALUES (:user,:organization,'organization_review','Новая заявка организации',:message)'''), {
-                    'user': admin['user_id'], 'organization': internal_id,
-                    'message': f'Организация «{payload.name}» ожидает модерации.',
-                })
+        organization_id = await create_organization_application(session, user['db_id'], payload)
     await restart_redis_cache()
     return {'id': organization_id, 'status': 'pending'}
 
@@ -1617,7 +1665,8 @@ async def request_organization(payload: OrganizationApplicationInput, user=Depen
 @app.get('/api/v1/organizations/mine')
 async def my_organizations(user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     items = await rows(session, '''SELECT o.public_id AS id,o.name,COALESCE(o.description,'') AS description,o.city,
-        o.latitude::float AS latitude,o.longitude::float AS longitude,o.email,o.phone,o.website,lower(o.status) AS status,
+        COALESCE(o.address,'') AS address,o.latitude::float AS latitude,o.longitude::float AS longitude,
+        o.email,o.phone,o.website,o.social_links AS "socialLinks",lower(o.status) AS status,
         lower(m.role) AS role,a.comment AS "applicationComment",a.review_comment AS "reviewComment",a.reviewed_at AS "reviewedAt"
         FROM organization_members m JOIN organizations o ON o.id=m.organization_id
         LEFT JOIN LATERAL (SELECT * FROM organization_applications x WHERE x.organization_id=o.id
@@ -1625,18 +1674,21 @@ async def my_organizations(user=Depends(require_user), session: AsyncSession = D
         WHERE m.user_id=:user ORDER BY o.created_at DESC,o.id DESC''', {'user': user['db_id']})
     for item in items:
         item['reviewedAt'] = timestamp(item['reviewedAt'])
+        organization_row(item)
     return items
 
 
 @app.get('/api/v1/admin/organizations')
 async def pending_organizations(user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
     items = await rows(session, '''SELECT o.public_id AS id,o.name,COALESCE(o.description,'') AS description,o.city,
-        o.latitude::float AS latitude,o.longitude::float AS longitude,o.email,o.phone,o.website,
+        COALESCE(o.address,'') AS address,o.latitude::float AS latitude,o.longitude::float AS longitude,
+        o.email,o.phone,o.website,o.social_links AS "socialLinks",
         a.comment,u.public_id AS "requestedById",u.name AS "requestedByName",a.created_at AS "createdAt"
         FROM organization_applications a JOIN organizations o ON o.id=a.organization_id JOIN users u ON u.id=a.submitted_by
         WHERE a.status='PENDING' AND o.status='PENDING' ORDER BY a.created_at,a.id''')
     for item in items:
         item['createdAt'] = timestamp(item['createdAt'])
+        organization_row(item)
     return items
 
 
@@ -1671,12 +1723,13 @@ async def review_organization(organization_id: str, payload: OrganizationReviewI
 @app.get('/api/v1/organizations/{organization_id}')
 async def organization_profile(organization_id: str, session: AsyncSession = Depends(db_session)):
     organization = (await session.execute(text('''SELECT public_id AS id,name,COALESCE(description,'') AS description,city,
-        latitude::float AS latitude,longitude::float AS longitude,email,phone,website
+        COALESCE(address,'') AS address,latitude::float AS latitude,longitude::float AS longitude,
+        email,phone,website,social_links AS "socialLinks"
         FROM organizations WHERE public_id=:id AND status='APPROVED' '''), {'id': organization_id})).mappings().first()
     if not organization:
         raise HTTPException(404, 'Organization not found')
     events = [item for item in await event_rows(session, None) if item.get('organizationId') == organization_id]
-    return {**dict(organization), 'events': events}
+    return {**organization_row(dict(organization)), 'events': events}
 
 
 async def approved_owned_organization(session: AsyncSession, public_id: str, user_id: int):
