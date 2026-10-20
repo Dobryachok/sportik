@@ -1,11 +1,11 @@
 import { Link, useLocation } from 'react-router-dom'
-import { isNavActive, navItems, visibleNavItems } from '../app/navigation'
+import { isNavActive, visibleNavItems } from '../app/navigation'
 import { useAppData } from '../app/AppDataContext'
 
 export function BottomNav() {
   const { pathname } = useLocation()
   const { currentUser, state } = useAppData()
-  const items = visibleNavItems(Boolean(currentUser))
+  const items = visibleNavItems(Boolean(currentUser), Boolean(currentUser?.startCompleted))
   const hasUnreadNotifications = state.notifications.some((item) => !item.isRead)
 
   return (

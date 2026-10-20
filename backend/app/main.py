@@ -228,12 +228,31 @@ def self_user(row):
         'maritalStatus': row.get('maritalStatus'),
         'hasCar': row.get('hasCar'),
         'workSchedule': row.get('workSchedule'),
+        'startCompleted': bool(row.get('startCompleted')),
     })
     if age is not None:
         result['age'] = int(age)
     elif birth_date is not None:
         result['age'] = age_from_birth_date(birth_date)
     return result
+
+
+async def mark_start_completed_if_ready(session, user) -> bool:
+    """Persist Start completion when city, bio, and a join are all present."""
+    if user.get('startCompleted'):
+        return True
+    if not (user.get('city') or '').strip() or not (user.get('bio') or '').strip():
+        return False
+    joined = await session.scalar(text(
+        "SELECT 1 FROM event_registrations WHERE user_id=:id AND status IN ('REGISTERED','PENDING') LIMIT 1"
+    ), {'id': user['db_id']})
+    if not joined:
+        return False
+    await session.execute(text('''INSERT INTO user_profiles (user_id, start_completed, updated_at)
+        VALUES (:id, true, now())
+        ON CONFLICT (user_id) DO UPDATE SET start_completed=true, updated_at=now()'''), {'id': user['db_id']})
+    user['startCompleted'] = True
+    return True
 
 
 def origin_matches_request_host(request: Request, origin: str):
@@ -272,6 +291,7 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
     user = (await session.execute(text("""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
         p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
         p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
+        COALESCE(p.start_completed,false) AS "startCompleted",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
         (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
@@ -385,7 +405,7 @@ async def register(payload: Credentials, request: Request, response: Response, s
                                   {'user': user_id, 'role': role_id})
         is_admin = await grant_configured_admin_role(session, user_id, payload.email)
         token = await create_login(session, user_id)
-    result = self_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'admin' if is_admin else 'user', 'avatarUrl': None, 'bio': ''})
+    result = self_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'admin' if is_admin else 'user', 'avatarUrl': None, 'bio': '', 'startCompleted': False})
     set_session(response, token)
     return result
 
@@ -397,6 +417,7 @@ async def login(payload: Credentials, request: Request, response: Response, sess
     user = (await session.execute(text('''SELECT u.id,u.public_id,u.password_hash,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
         p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
         p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
+        COALESCE(p.start_completed,false) AS "startCompleted",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
         (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
@@ -523,11 +544,26 @@ async def patch_profile(payload: ProfileInput, user=Depends(require_user), sessi
                 f'INSERT INTO user_profiles ({columns}) VALUES ({bindings}) '
                 f'ON CONFLICT (user_id) DO UPDATE SET {updates},updated_at=now()'
             ), {**profile_values, 'id': user['db_id']})
+        user.update(user_values)
+        await mark_start_completed_if_ready(session, user)
     await restart_redis_cache()
     result = {**user, **user_values, **profile_values}
     if 'birthDate' in profile_values:
         result['age'] = age_from_birth_date(profile_values['birthDate'])
     return self_user(result)
+
+
+@app.post('/api/v1/profile/start-complete')
+async def complete_start_quest(user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    if user.get('startCompleted'):
+        return self_user(user)
+    await session.commit()
+    async with session.begin():
+        ready = await mark_start_completed_if_ready(session, user)
+    if not ready:
+        raise HTTPException(status.HTTP_409_CONFLICT, 'Start quest is not complete')
+    await restart_redis_cache()
+    return self_user(user)
 
 
 def image_extension(data: bytes):
@@ -1265,6 +1301,7 @@ async def join(event_id: str, user=Depends(require_user), session: AsyncSession 
                                   {'event': event['id'], 'user': user['db_id'], 'status': result})
         if result == 'REGISTERED':
             activity = await create_event_chat_activity(session, event['id'], event_id, user, 'PARTICIPANT_JOINED')
+        await mark_start_completed_if_ready(session, user)
     await restart_redis_cache()
     if activity:
         await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})

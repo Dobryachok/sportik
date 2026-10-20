@@ -1,7 +1,9 @@
+import { useRef } from 'react'
 import { CalendarCheck, Check, ChevronRight, MapPin, Sprout, UserCheck } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { PageHeader } from '../components/PageHeader'
+import { hasStartEvent, hasStartProfile } from '../lib/startQuest'
 
 interface QuestStep {
   title: string
@@ -14,8 +16,10 @@ interface QuestStep {
 
 export function TamagotchiPage() {
   const { city, currentUser, state } = useAppData()
-  const hasProfile = Boolean(currentUser?.city && currentUser?.bio?.trim())
-  const hasFirstEvent = Boolean(currentUser && state.participations.some((item) => item.userId === currentUser.id && (item.status === 'confirmed' || item.status === 'pending')))
+  const completedBeforeVisit = useRef(Boolean(currentUser?.startCompleted))
+  const hasProfile = hasStartProfile(currentUser)
+  const hasFirstEvent = hasStartEvent(state, currentUser?.id)
+  if (completedBeforeVisit.current) return <Navigate to="/sportik" replace />
   const steps: QuestStep[] = [
     {
       title: 'Выберите город',
@@ -34,11 +38,11 @@ export function TamagotchiPage() {
       icon: UserCheck,
     },
     {
-      title: 'Запишитесь на встречу',
+      title: 'Запишитесь на событие',
       description: 'Выберите занятие по душе и получите первое место в своей команде.',
       complete: hasFirstEvent,
       to: '/events',
-      action: 'Найти встречу',
+      action: 'Найти событие',
       icon: CalendarCheck,
     },
   ]
@@ -48,7 +52,7 @@ export function TamagotchiPage() {
 
   return (
     <div className="page-frame pb-5">
-      <PageHeader title="Тамагочи" back />
+      <PageHeader title="Старт" back />
       <section className="overflow-hidden rounded-[1.7rem] border border-accent/20 bg-card shadow-[0_16px_44px_rgba(10,64,96,0.1)]">
         <div className="relative overflow-hidden bg-accent px-5 py-6 text-white sm:px-7 sm:py-8">
           <div className="absolute -right-8 -top-12 h-44 w-44 rounded-full bg-white/15" aria-hidden />
@@ -88,7 +92,7 @@ export function TamagotchiPage() {
             })}
           </div>
           {nextStep && <Link to={nextStep.to} className="mt-5 flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-accent px-4 text-sm font-bold text-white transition-colors hover:bg-accent-hover">{nextStep.action} <ChevronRight size={17} /></Link>}
-          {isComplete && <Link to="/my-events" className="mt-5 flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-accent px-4 text-sm font-bold text-white transition-colors hover:bg-accent-hover">Посмотреть мои события <ChevronRight size={17} /></Link>}
+          {isComplete && <Link to="/sportik?shop=1" className="mt-5 flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-accent px-4 text-sm font-bold text-white transition-colors hover:bg-accent-hover">Открыть магазин Спортика <ChevronRight size={17} /></Link>}
         </div>
       </section>
     </div>

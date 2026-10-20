@@ -1,4 +1,4 @@
-import { Bell, CalendarCheck, CircleCheck, Sparkles, User, PersonStanding, Trophy } from 'lucide-react'
+import { Bell, CalendarCheck, CircleCheck, Sparkles, User, PersonStanding } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 export interface NavItem {
@@ -9,6 +9,7 @@ export interface NavItem {
   match?: (path: string) => boolean
   showBadge?: boolean
   authOnly?: boolean
+  hideWhenStartComplete?: boolean
 }
 
 export const navItems: NavItem[] = [
@@ -33,9 +34,10 @@ export const navItems: NavItem[] = [
   },
   {
     to: '/tamagotchi',
-    label: 'Тамагочи',
+    label: 'Старт',
     shortLabel: 'Старт',
     icon: Sparkles,
+    hideWhenStartComplete: true,
     match: (p) => p === '/tamagotchi',
   },
   {
@@ -67,6 +69,10 @@ export function isNavActive(item: NavItem, pathname: string): boolean {
   return pathname === item.to
 }
 
-export function visibleNavItems(isAuthenticated: boolean): NavItem[] {
-  return navItems.filter((item) => !item.authOnly || isAuthenticated)
+export function visibleNavItems(isAuthenticated: boolean, startCompleted = false): NavItem[] {
+  return navItems.filter((item) => {
+    if (item.authOnly && !isAuthenticated) return false
+    if (item.hideWhenStartComplete && startCompleted) return false
+    return true
+  })
 }

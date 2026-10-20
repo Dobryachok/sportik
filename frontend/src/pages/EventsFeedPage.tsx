@@ -13,7 +13,6 @@ const sportTones = [
 
 export function EventsFeedPage() {
   const { state, city, currentUser } = useAppData()
-  const hasFirstEvent = Boolean(currentUser && state.participations.some((item) => item.userId === currentUser.id && (item.status === 'confirmed' || item.status === 'pending')))
 
   return (
     <div className="page-frame pb-3">
@@ -31,7 +30,7 @@ export function EventsFeedPage() {
         </div>
       )}
 
-      {currentUser && !hasFirstEvent && (
+      {currentUser && !currentUser.startCompleted && (
         <Link to="/tamagotchi" className="mt-5 flex items-center gap-3 rounded-2xl border border-accent/20 bg-card p-4 shadow-[0_8px_24px_rgba(9,104,157,0.08)] transition-colors hover:border-accent/45">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-accent/10 text-accent"><Sparkles size={21} /></span>
           <span className="min-w-0 flex-1"><span className="block font-bold text-white">Ваш первый выход на площадку</span><span className="mt-0.5 block text-sm text-muted">Три шага до первой встречи</span></span>
@@ -61,8 +60,8 @@ export function EventsFeedPage() {
                   {sport.name.slice(0, 1)}
                 </span>
                 <div className="relative flex h-full flex-col justify-between">
-                  <span className="text-base font-bold leading-tight text-white">{sport.name}</span>
-                  <span className="text-sm text-white/65">
+                  <span className="text-base font-bold leading-tight text-black">{sport.name}</span>
+                  <span className="text-sm text-black/65">
                     {sport.eventCount ?? state.events.filter((event) => event.sportId === sport.id).length} мероприятий
                   </span>
                 </div>

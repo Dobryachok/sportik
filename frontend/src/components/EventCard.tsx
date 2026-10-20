@@ -34,12 +34,12 @@ export function EventCard({
       )}
       <Link
         to={`/events/${event.id}`}
-        className="group relative min-w-0 flex-1 overflow-hidden rounded-[1.35rem] border border-white/[0.07] bg-card px-4 py-4 shadow-[0_14px_28px_rgba(0,0,0,0.16)] transition-colors hover:bg-card-elevated focus-visible:outline-none sm:px-5"
+        className="group relative min-w-0 flex-1 overflow-hidden rounded-[1.35rem] border border-black/10 bg-white px-4 py-4 shadow-[0_14px_28px_rgba(0,0,0,0.16)] transition-colors hover:bg-neutral-50 focus-visible:outline-none sm:px-5"
       >
         <span className="absolute bottom-4 left-0 top-4 w-1 rounded-r-full bg-accent-line" />
         <div className="pl-2.5">
           <div className="mb-3 flex items-start gap-2 md:hidden">
-            <span className="rounded-lg bg-white/[0.07] px-2 py-1 text-[11px] font-medium text-white/80">
+            <span className="rounded-lg bg-black/5 px-2 py-1 text-[11px] font-medium text-black/80">
               {date} · {day} · {time}
             </span>
           </div>
@@ -51,19 +51,19 @@ export function EventCard({
             )}
             {event.eventType === 'tournament' && <span className="rounded-full border border-warning/70 px-2.5 py-1 text-[11px] font-semibold text-warning">Турнир</span>}
             {event.district && (
-              <span className="rounded-full border border-white/15 px-2.5 py-1 text-[11px] font-medium text-white/70">
+              <span className="rounded-full border border-black/15 px-2.5 py-1 text-[11px] font-medium text-black/70">
                 {event.district}
               </span>
             )}
           </div>
-          <h3 className="break-words text-[1.03rem] font-bold leading-snug tracking-[-0.015em] text-white group-hover:text-white">
+          <h3 className="break-words text-[1.03rem] font-bold leading-snug tracking-[-0.015em] text-black group-hover:text-black">
             {event.title}
           </h3>
-          <p className="mt-1.5 break-words text-sm leading-snug text-muted">{event.address}</p>
+          <p className="mt-1.5 break-words text-sm leading-snug text-black/70">{event.address}</p>
           <div className="mt-4 flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <AvatarStack urls={participantAvatars} />
-              <span className="truncate text-xs text-muted">
+              <span className="truncate text-xs text-black/70">
                 {participantCount} из {event.capacity} чел.
               </span>
             </div>

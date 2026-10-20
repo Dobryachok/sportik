@@ -16,6 +16,7 @@ def test_auth_and_private_write_contracts_are_published():
     for route in (
         '/api/v1/auth/register', '/api/v1/auth/login', '/api/v1/auth/logout',
         '/api/v1/auth/me', '/api/v1/profile', '/api/v1/profile/avatar',
+        '/api/v1/profile/start-complete',
         '/api/v1/geo/reverse', '/api/v1/events/{event_id}/comments',
         '/api/v1/users/{user_id}/follow', '/api/v1/sports/requests',
         '/api/v1/admin/sports', '/api/v1/admin/sports/{sport_id}',
@@ -116,6 +117,14 @@ def test_follows_and_sport_moderation_migration_is_additive():
     assert 'TRUNCATE' not in migration
 
 
+def test_start_completed_migration_is_additive():
+    migration = (Path(__file__).parents[1] / 'migrations' / 'versions' / '0008_start_completed.py').read_text(encoding='utf8')
+    upgrade = migration.partition('def downgrade():')[0]
+    assert 'start_completed' in upgrade
+    assert 'DROP TABLE' not in upgrade
+    assert 'TRUNCATE' not in upgrade
+
+
 def test_organization_and_chat_activity_migration_is_additive():
     migration = (Path(__file__).parents[1] / 'migrations' / 'versions' / '0007_organizations_event_moderation_and_chat_activity.py').read_text(encoding='utf8')
     upgrade = migration.partition('def downgrade():')[0]
@@ -132,6 +141,8 @@ def test_new_release_guards_exist_in_backend_source():
     assert "event_unpublished" in source
     assert "PARTICIPANT_LEFT" in source
     assert 'grant_configured_admin_role' in source
+    assert 'async def mark_start_completed_if_ready' in source
+    assert 'startCompleted' in source
     assert "EXTRACT(YEAR FROM age(current_date,p.birth_date))" in source
     assert 'p.birth_date AS "birthDate"' not in source[source.index('async def find_public_user'):source.index('async def event_rows')]
 

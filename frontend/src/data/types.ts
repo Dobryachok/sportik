@@ -27,6 +27,7 @@ export interface User {
   maritalStatus?: string | null
   hasCar?: boolean | null
   workSchedule?: string | null
+  startCompleted?: boolean
   viewerFollows?: boolean
   stats?: { events: number; subscriptions: number; followers: number }
 }

@@ -1,14 +1,14 @@
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Bounds, Center, OrbitControls, useGLTF } from '@react-three/drei'
 import { TOUCH } from 'three'
 import { SportikModel } from './sportik/SportikModel'
-import { ChevronDown, ChevronLeft, ChevronUp, Palette, ShoppingBag, Trophy } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronUp, Lock, Palette, ShoppingBag, Trophy } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import {
   readClosedChallenges,
   sportikChallenges,
-  writeClosedChallenges,
   type SportikChallenge,
 } from './sportik/challenges'
 import {
@@ -59,15 +59,19 @@ const menuCards = [
   },
 ] as const
 
-type PanelView = 'home' | 'challenges' | 'challenge-detail'
+type PanelView = 'home' | 'challenges' | 'challenge-detail' | 'shop'
 
 export function SportikPage() {
   const { currentUser, state } = useAppData()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [menuOpen, setMenuOpen] = useState(true)
   const [hintStep, setHintStep] = useState<number | null>(null)
   const [panel, setPanel] = useState<PanelView>('home')
   const [selectedChallengeId, setSelectedChallengeId] = useState<string | null>(null)
   const [closedIds, setClosedIds] = useState<string[]>([])
+  const shopUnlocked = Boolean(currentUser?.startCompleted)
+  const wasShopUnlocked = useRef(shopUnlocked)
 
   const hintsOpen = hintStep !== null
   const currentHint = hintsOpen ? hints[hintStep] : null
@@ -78,11 +82,21 @@ export function SportikPage() {
     setClosedIds(readClosedChallenges(currentUser.id))
     try {
       const seen = localStorage.getItem(hintsStorageKey(currentUser.id))
-      if (!seen) setHintStep(0)
+      if (!seen && searchParams.get('shop') !== '1') setHintStep(0)
     } catch {
       setHintStep(0)
     }
-  }, [currentUser])
+  }, [currentUser, searchParams])
+
+  useEffect(() => {
+    const openFromQuery = searchParams.get('shop') === '1'
+    const justUnlocked = shopUnlocked && !wasShopUnlocked.current
+    if (shopUnlocked && (openFromQuery || justUnlocked)) {
+      setMenuOpen(true)
+      setPanel('shop')
+    }
+    wasShopUnlocked.current = shopUnlocked
+  }, [searchParams, shopUnlocked])
 
   const visits = currentUser ? countVisits(state, currentUser.id) : 0
   const closedCount = closedIds.length
@@ -113,13 +127,6 @@ export function SportikPage() {
       return
     }
     setHintStep((step) => (step === null ? null : step + 1))
-  }
-
-  const closeChallenge = (id: string) => {
-    if (!currentUser || closedIds.includes(id)) return
-    const next = [...closedIds, id]
-    setClosedIds(next)
-    writeClosedChallenges(currentUser.id, next)
   }
 
   const showMenu = menuOpen || hintsOpen
@@ -215,25 +222,43 @@ export function SportikPage() {
               <div className="grid grid-cols-3 gap-2">
                 {menuCards.map((card) => {
                   const Icon = card.icon
+                  const shopLocked = card.id === 'shop' && !shopUnlocked
                   return (
                     <button
                       key={card.id}
                       type="button"
                       onClick={() => {
                         if (card.id === 'challenges') setPanel('challenges')
+                        if (card.id === 'shop') {
+                          if (shopLocked) {
+                            navigate('/tamagotchi')
+                            return
+                          }
+                          setPanel('shop')
+                        }
                       }}
-                      className="flex min-h-[6.5rem] flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-card-elevated px-2 py-3 text-center transition-colors hover:border-accent/40 hover:bg-white/5"
+                      className={`flex min-h-[6.5rem] flex-col items-center justify-center gap-2 rounded-2xl border px-2 py-3 text-center transition-colors ${
+                        shopLocked
+                          ? 'border-white/10 bg-card-elevated/70 opacity-70'
+                          : 'border-white/10 bg-card-elevated hover:border-accent/40 hover:bg-white/5'
+                      }`}
                     >
-                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                      <span className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
                         <Icon size={20} />
+                        {shopLocked && (
+                          <Lock size={12} className="absolute -right-1 -top-1 rounded-full bg-card text-white" />
+                        )}
                       </span>
                       <span className="text-sm font-semibold text-white">{card.title}</span>
-                      <span className="text-[11px] leading-tight text-muted">{card.subtitle}</span>
+                      <span className="text-[11px] leading-tight text-muted">
+                        {shopLocked ? 'Пройдите Старт' : card.subtitle}
+                      </span>
                     </button>
                   )
                 })}
               </div>
             )}
+            {panel === 'shop' && <ShopPanel />}
             {panel === 'challenges' && (
               <ChallengeList
                 closedIds={closedIds}
@@ -244,11 +269,7 @@ export function SportikPage() {
               />
             )}
             {panel === 'challenge-detail' && selectedChallenge && (
-              <ChallengeDetail
-                challenge={selectedChallenge}
-                closed={closedIds.includes(selectedChallenge.id)}
-                onClose={() => closeChallenge(selectedChallenge.id)}
-              />
+              <ChallengeDetail challenge={selectedChallenge} closed={closedIds.includes(selectedChallenge.id)} />
             )}
           </div>
         ) : (
@@ -303,6 +324,23 @@ export function SportikPage() {
   )
 }
 
+function ShopPanel() {
+  return (
+    <div className="space-y-3 px-1 pb-1">
+      <p className="text-sm font-semibold text-white">Магазин Спортика</p>
+      <p className="text-sm leading-5 text-muted">Скины и вещи для персонажа. Новые позиции появятся по мере роста Спортика.</p>
+      <div className="grid grid-cols-2 gap-2">
+        {['Стартовый набор', 'Лента прогресса'].map((title) => (
+          <div key={title} className="rounded-2xl border border-white/10 bg-card-elevated px-3 py-4">
+            <p className="text-sm font-semibold text-white">{title}</p>
+            <p className="mt-1 text-[11px] text-muted">Скоро</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function ChallengeList({
   closedIds,
   onOpen,
@@ -319,14 +357,14 @@ function ChallengeList({
             key={challenge.id}
             type="button"
             onClick={() => onOpen(challenge)}
-            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-card-elevated px-3 py-3 text-left transition-colors hover:border-accent/40"
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/10 bg-card-elevated px-3 py-3 text-left"
           >
             <span>
               <span className="block text-sm font-semibold text-white">{challenge.title}</span>
               <span className="mt-0.5 block text-[11px] text-muted">{challenge.reward}</span>
             </span>
             <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${closed ? 'bg-accent/15 text-accent' : 'bg-white/8 text-muted'}`}>
-              {closed ? 'Закрыт' : `+${challenge.points}`}
+              {closed ? 'Закрыт' : 'Просмотр'}
             </span>
           </button>
         )
@@ -338,11 +376,9 @@ function ChallengeList({
 function ChallengeDetail({
   challenge,
   closed,
-  onClose,
 }: {
   challenge: SportikChallenge
   closed: boolean
-  onClose: () => void
 }) {
   return (
     <div className="px-1 pb-1">
@@ -358,14 +394,9 @@ function ChallengeDetail({
           <dd className="font-semibold text-white">{challenge.reward}</dd>
         </div>
       </dl>
-      <button
-        type="button"
-        onClick={onClose}
-        disabled={closed}
-        className="mt-3 flex min-h-11 w-full items-center justify-center rounded-xl bg-accent px-4 text-sm font-bold text-white transition-colors hover:bg-accent-hover disabled:bg-white/10 disabled:text-muted"
-      >
-        {closed ? 'Челленж уже закрыт' : 'Закрыть челленж'}
-      </button>
+      <p className="mt-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm leading-5 text-muted">
+        {closed ? 'Челленж уже закрыт.' : 'Только просмотр: закрыть челленж самостоятельно нельзя.'}
+      </p>
     </div>
   )
 }

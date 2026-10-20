@@ -40,6 +40,7 @@ export const register = (input: { email: string; password: string; name: string 
 export const login = (input: { email: string; password: string }) => request<User>('/auth/login', { method: 'POST', body: JSON.stringify(input) })
 export const logout = () => request<void>('/auth/logout', { method: 'POST' })
 export const updateProfile = (input: Partial<Pick<User, 'name' | 'bio' | 'city' | 'birthDate' | 'maritalStatus' | 'hasCar' | 'workSchedule' | 'socialLinks'>>) => request<User>('/profile', { method: 'PATCH', body: JSON.stringify(input) })
+export const completeStartQuest = () => request<User>('/profile/start-complete', { method: 'POST' })
 export const uploadAvatar = (file: File) => { const body = new FormData(); body.append('file', file); return request<User>('/profile/avatar', { method: 'POST', body }) }
 export const reverseGeocode = (latitude: number, longitude: number) => request<{ city: string }>('/geo/reverse', { method: 'POST', body: JSON.stringify({ latitude, longitude }) })
 export const suggestAddresses = (query: string, city?: string, signal?: AbortSignal) => request<LocationSuggestion[]>(`/geo/suggest?query=${encodeURIComponent(query)}${city ? `&city=${encodeURIComponent(city)}` : ''}`, { signal })
