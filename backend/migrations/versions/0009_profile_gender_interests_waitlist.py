@@ -1,11 +1,11 @@
 """Profile gender/interests and event waitlist registrations.
 
-Revision ID: 0009_profile_gender_interests_waitlist
+Revision ID: 0009_prof_gender_interests
 Revises: 0008_start_completed
 """
 from alembic import op
 
-revision = '0009_profile_gender_interests_waitlist'
+revision = '0009_prof_gender_interests'
 down_revision = '0008_start_completed'
 branch_labels = None
 depends_on = None
