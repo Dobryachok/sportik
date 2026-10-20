@@ -37,6 +37,8 @@ _geo_lock = asyncio.Lock()
 _geo_last_request = 0.0
 _chat_connections: dict[str, set[WebSocket]] = {}
 _chat_connections_lock = asyncio.Lock()
+_LEGACY_MIGRATION_DEMO_USER_IDS = ('u-demo', 'u-anya', 'u-vitya')
+_LEGACY_MIGRATION_DEMO_USER_SQL = ', '.join(f"'{pid}'" for pid in _LEGACY_MIGRATION_DEMO_USER_IDS)
 
 
 async def seed_mock_catalog():
@@ -50,10 +52,15 @@ async def seed_mock_catalog():
                 seeded = await session.scalar(text("SELECT 1 FROM sports WHERE public_id='sp-seed-volleyball'"))
                 if seeded:
                     return
-                existing_users = await session.scalar(text('SELECT count(*) FROM users'))
-                if existing_users:
+                has_real_users = await session.scalar(text(
+                    f'SELECT 1 FROM users WHERE public_id NOT IN ({_LEGACY_MIGRATION_DEMO_USER_SQL}) LIMIT 1'
+                ))
+                if has_real_users:
                     logger.info('Skipping mock catalog: the database already contains user data')
                     return
+                await session.execute(text(
+                    f'DELETE FROM users WHERE public_id IN ({_LEGACY_MIGRATION_DEMO_USER_SQL})'
+                ))
                 await session.execute(text('''INSERT INTO users(public_id,name,city,bio,status)
                     VALUES
                     ('u-seed-elena','Елена','Красноярск','Играю в волейбол и ищу компанию для активных выходных.','ACTIVE'),

@@ -153,7 +153,7 @@ def test_mock_seed_is_opt_in_configurable_and_safe_for_real_data():
     assert 'async def seed_mock_catalog()' in source
     assert 'await seed_mock_catalog()' in source
     assert 'if not settings.seed_mock_data:' in source
-    assert "SELECT count(*) FROM users" in source
+    assert "u-demo','u-anya','u-vitya" in source
     assert "Skipping mock catalog: the database already contains user data" in source
     assert 'seed_mock_data: bool = True' in config
     assert 'password_hash' not in source[source.index('async def seed_mock_catalog()'):source.index('@asynccontextmanager')]
