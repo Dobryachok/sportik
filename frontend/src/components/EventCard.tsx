@@ -10,6 +10,7 @@ interface EventCardProps {
   participantAvatars: string[]
   participantCount: number
   showTimeline?: boolean
+  scheduleTag?: 'upcoming' | 'past'
 }
 
 export function EventCard({
@@ -18,6 +19,7 @@ export function EventCard({
   participantAvatars,
   participantCount,
   showTimeline = true,
+  scheduleTag,
 }: EventCardProps) {
   const { date, day, time } = formatEventDate(event.startsAt)
 
@@ -50,6 +52,8 @@ export function EventCard({
               </span>
             )}
             {event.eventType === 'tournament' && <span className="rounded-full border border-warning/70 px-2.5 py-1 text-[11px] font-semibold text-warning">Турнир</span>}
+            {scheduleTag === 'upcoming' && <span className="rounded-full border border-accent/50 bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">Скоро</span>}
+            {scheduleTag === 'past' && <span className="rounded-full border border-black/20 bg-black/5 px-2.5 py-1 text-[11px] font-semibold text-black/60">Прошло</span>}
             {event.district && (
               <span className="rounded-full border border-black/15 px-2.5 py-1 text-[11px] font-medium text-black/70">
                 {event.district}

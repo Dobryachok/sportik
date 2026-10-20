@@ -73,6 +73,7 @@ export function MyEventsPage() {
                 sport={sport}
                 participantCount={event.confirmedCount ?? participants.length}
                 participantAvatars={getParticipantAvatars(state.users, participants.map((participant) => participant.userId))}
+                scheduleTag={tab === 'favorites' ? (isPast(event.startsAt) ? 'past' : 'upcoming') : undefined}
               />
             )
           })}

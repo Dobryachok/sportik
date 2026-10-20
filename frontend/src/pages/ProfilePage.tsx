@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { PrimaryButton } from '../components/PrimaryButton'
 import { ThemeToggle } from '../components/ThemeToggle'
+import { GENDER_OPTIONS, INTEREST_CATALOG, genderLabel } from '../data/interestCatalog'
 import type { SocialLink } from '../data/types'
 
 const maritalOptions = [
@@ -32,6 +33,8 @@ export function ProfilePage() {
   )
   const [workSchedule, setWorkSchedule] = useState(currentUser?.workSchedule ?? '')
   const [socialLinks, setSocialLinks] = useState<SocialLink[]>(currentUser?.socialLinks ?? [])
+  const [gender, setGender] = useState(currentUser?.gender ?? '')
+  const [interests, setInterests] = useState<string[]>(currentUser?.interests ?? [])
   const [busy, setBusy] = useState(false)
 
   if (!currentUser) return null
@@ -45,6 +48,12 @@ export function ProfilePage() {
     setHasCar(currentUser.hasCar === null || currentUser.hasCar === undefined ? '' : currentUser.hasCar ? 'yes' : 'no')
     setWorkSchedule(currentUser.workSchedule ?? '')
     setSocialLinks(currentUser.socialLinks ?? [])
+    setGender(currentUser.gender ?? '')
+    setInterests(currentUser.interests ?? [])
+  }
+
+  const toggleInterest = (tag: string) => {
+    setInterests((items) => items.includes(tag) ? items.filter((item) => item !== tag) : items.length >= 12 ? items : [...items, tag])
   }
 
   const openEditing = () => {
@@ -63,6 +72,8 @@ export function ProfilePage() {
       maritalStatus: maritalStatus || null,
       hasCar: hasCar === '' ? null : hasCar === 'yes',
       workSchedule: workSchedule || null,
+      gender: gender ? (gender as 'male' | 'female' | 'unknown') : null,
+      interests,
       socialLinks: socialLinks
         .map((item) => ({ platform: item.platform.trim(), label: item.label?.trim() || '', url: item.url.trim() }))
         .filter((item) => item.platform && item.url),
@@ -85,6 +96,7 @@ export function ProfilePage() {
 
   const stats = currentUser.stats ?? { events: 0, subscriptions: 0, followers: 0 }
   const infoRows = [
+    { label: 'Пол', value: genderLabel(currentUser.gender) },
     { label: 'Семейное положение', value: optionalValue(currentUser.maritalStatus) },
     {
       label: 'Автомобиль',
@@ -205,6 +217,32 @@ export function ProfilePage() {
               <input type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent" />
             </label>
             <label className="block text-sm font-medium text-white/85">
+              Пол
+              <select value={gender} onChange={(event) => setGender(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent">
+                {GENDER_OPTIONS.map((option) => <option key={option.value || 'empty'} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label className="block text-sm font-medium text-white/85">
+              Интересы
+              <select
+                value=""
+                onChange={(event) => { if (event.target.value) toggleInterest(event.target.value); event.target.value = '' }}
+                className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent"
+              >
+                <option value="">Добавить из списка…</option>
+                {INTEREST_CATALOG.filter((tag) => !interests.includes(tag)).map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+              </select>
+              {interests.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {interests.map((tag) => (
+                    <button key={tag} type="button" onClick={() => toggleInterest(tag)} className="rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent">
+                      {tag} ×
+                    </button>
+                  ))}
+                </div>
+              )}
+            </label>
+            <label className="block text-sm font-medium text-white/85">
               Семейное положение
               <select value={maritalStatus} onChange={(event) => setMaritalStatus(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent">
                 {maritalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -260,6 +298,16 @@ export function ProfilePage() {
               ))}
             </div>
           </section>
+          {currentUser.interests && currentUser.interests.length > 0 && (
+            <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
+              <h2 className="text-lg font-bold">Интересы</h2>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {currentUser.interests.map((tag) => (
+                  <span key={tag} className="rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent">{tag}</span>
+                ))}
+              </div>
+            </section>
+          )}
           <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
             <div className="flex items-center justify-between gap-4">
               <h2 className="text-lg font-bold">О себе</h2>

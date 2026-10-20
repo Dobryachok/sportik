@@ -59,7 +59,7 @@ export function DiscussionPage() {
           if (payload.type === 'ack' && payload.clientMessageId === pendingMessageRef.current?.id) {
             const sent = pendingMessageRef.current
             pendingMessageRef.current = null
-            setText((current) => current === sent.text ? '' : current)
+            setText((current) => (sent && current === sent.text) ? '' : current)
             setSending(false)
           }
           if (payload.type === 'error') {

@@ -7,10 +7,12 @@ import {
   Route,
   Share2,
 } from 'lucide-react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useEffect, useRef, useState } from 'react'
 import { fetchEvent, fetchEventParticipants, moderateEvent } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
+import { EventJoinPanel } from '../components/EventJoinPanel'
+import { EventOrganizerCard } from '../components/EventOrganizerCard'
 import { MobileActionBar } from '../components/MobileActionBar'
 import { PrimaryButton } from '../components/PrimaryButton'
 import { StarRating } from '../components/StarRating'
@@ -24,11 +26,13 @@ import type { User } from '../data/types'
 export function EventDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const { state, currentUser, like, review, favorite, leave, refresh, setCity } = useAppData()
   const event = state.events.find((item) => item.id === id)
   const [lookup, setLookup] = useState<'loading' | 'missing'>('loading')
   const [participantProfiles, setParticipantProfiles] = useState<User[]>([])
   const [moderationError, setModerationError] = useState('')
+  const [joinOpen, setJoinOpen] = useState(false)
   const requestedId = useRef<string | null>(null)
 
   useEffect(() => {
@@ -49,6 +53,14 @@ export function EventDetailPage() {
     return () => { cancelled = true }
   }, [id])
 
+  useEffect(() => {
+    const navState = location.state as { openJoin?: boolean } | null
+    if (navState?.openJoin) {
+      setJoinOpen(true)
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+  }, [location, navigate])
+
   const sport = event ? state.sports.find((item) => item.id === event.sportId) : undefined
   const organizer = event ? state.users.find((user) => user.id === event.organizerUserId) : undefined
 
@@ -67,7 +79,7 @@ export function EventDetailPage() {
     ? `https://yandex.ru/maps/?pt=${event.longitude},${event.latitude}&z=16&l=map`
     : `https://yandex.ru/maps/?text=${encodeURIComponent([event.city, event.address].filter(Boolean).join(', '))}`
   const canJoin = !unpublished && (!myPart || myPart.status === 'rejected' || myPart.status === 'cancelled')
-  const showMobileCta = canJoin || (!unpublished && myPart?.status === 'pending')
+  const showMobileCta = canJoin || (!unpublished && (myPart?.status === 'pending' || myPart?.status === 'waitlist'))
   const leaveConfirmedEvent = async () => {
     if (!window.confirm('Покинуть это мероприятие?')) return
     await leave(event.id)
@@ -83,10 +95,18 @@ export function EventDetailPage() {
     }
   }
 
+  const openJoin = () => {
+    if (!currentUser) {
+      navigate('/login', { state: { from: `/events/${event.id}` } })
+      return
+    }
+    setJoinOpen(true)
+  }
+
   return (
-    <div className="page-frame pb-action-bar-only md:grid md:grid-cols-[minmax(0,1.1fr)_minmax(20rem,.9fr)] md:items-start md:gap-8">
-      <div className="md:sticky md:top-6">
-        <div className="relative min-h-72 overflow-hidden rounded-[1.55rem] border border-white/[0.09] bg-card shadow-[0_18px_38px_rgba(0,0,0,0.2)] md:min-h-[31rem]">
+    <div className="page-frame pb-action-bar-only">
+      <div>
+        <div className="relative min-h-72 overflow-hidden rounded-[1.55rem] border border-white/[0.09] bg-card shadow-[0_18px_38px_rgba(0,0,0,0.2)] md:min-h-[24rem]">
           <img
             src={event.imageUrl ?? '/images/hero.png'}
             alt=""
@@ -148,7 +168,9 @@ export function EventDetailPage() {
         )}
       </div>
 
-      <div className="pt-6 md:pt-1">
+      <div className="mt-6 space-y-4">
+        <EventOrganizerCard event={event} organizer={organizer} />
+
         <div className="rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
           <p className="text-xs font-semibold text-muted">Место встречи</p>
           <p className="mt-1 flex items-start gap-2 text-sm font-semibold leading-snug text-white">
@@ -156,8 +178,6 @@ export function EventDetailPage() {
             <span>{event.address}</span>
           </p>
         </div>
-
-        {event.organizationId && <div className="mt-3 rounded-[1.35rem] border border-white/[0.08] bg-card p-4"><p className="text-xs font-semibold text-muted">Организатор</p><Link to={`/organizations/${event.organizationId}`} className="mt-1 inline-block text-sm font-bold text-accent hover:text-accent-hover">{event.organizationName || 'Организация'}</Link></div>}
 
         {unpublished && (
           <p className="mt-4 rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-sm text-warning">
@@ -198,7 +218,7 @@ export function EventDetailPage() {
 
         {myPart && (
           <p className="mt-4 rounded-xl border border-accent/25 bg-accent/10 px-3 py-2 text-sm text-accent">
-            Ваш статус: {myPart.status === 'confirmed' ? 'подтверждено' : myPart.status === 'pending' ? 'ожидает решения' : myPart.status === 'cancelled' ? 'вы покинули событие' : 'отклонено'}
+            Ваш статус: {myPart.status === 'confirmed' ? 'подтверждено' : myPart.status === 'pending' ? 'ожидает решения' : myPart.status === 'waitlist' ? 'в резерве' : myPart.status === 'cancelled' ? 'вы покинули событие' : 'отклонено'}
           </p>
         )}
 
@@ -236,14 +256,17 @@ export function EventDetailPage() {
             <PrimaryButton variant="outline" fullWidth>Обсудить в чате</PrimaryButton>
           </Link>
           {canJoin && (
-            <Link to={`/events/${event.id}/join`} className="hidden md:block">
-              <PrimaryButton fullWidth>{event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}</PrimaryButton>
-            </Link>
+            <PrimaryButton fullWidth className="hidden md:flex" onClick={openJoin}>
+              {event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}
+            </PrimaryButton>
           )}
           {!unpublished && myPart?.status === 'pending' && (
             <PrimaryButton fullWidth disabled className="hidden md:flex">Заявка отправлена</PrimaryButton>
           )}
-          {!unpublished && myPart?.status === 'confirmed' && !isOrganizer && <PrimaryButton variant="outline" fullWidth onClick={() => void leaveConfirmedEvent()}>Покинуть событие</PrimaryButton>}
+          {!unpublished && myPart?.status === 'waitlist' && (
+            <PrimaryButton fullWidth disabled className="hidden md:flex">Вы в резерве</PrimaryButton>
+          )}
+          {!unpublished && myPart?.status === 'confirmed' && <PrimaryButton variant="outline" fullWidth onClick={() => void leaveConfirmedEvent()}>Покинуть событие</PrimaryButton>}
           {currentUser?.role === 'admin' && !unpublished && <PrimaryButton variant="outline" fullWidth onClick={() => void unpublishByAdmin()}>Снять с публикации</PrimaryButton>}
           <button
             type="button"
@@ -259,20 +282,23 @@ export function EventDetailPage() {
             {participantProfiles.map((participant) => <Link key={participant.id} to={`/users/${participant.id}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.08] bg-card p-3 transition-colors hover:border-accent/50"><img src={participant.avatarUrl || '/images/hero.png'} alt="" className="h-10 w-10 shrink-0 rounded-full object-cover" /><span className="min-w-0"><span className="block truncate font-semibold text-white">{participant.name}</span><span className="block truncate text-xs text-muted">{participant.city || 'Город не указан'}</span></span></Link>)}
           </div></section>
         )}
-        {organizer && <p className="mt-5 text-sm text-muted">Организатор: <Link to={`/users/${organizer.id}`} className="font-medium text-white hover:text-accent">{organizer.name}</Link></p>}
       </div>
 
       {showMobileCta && (
         <MobileActionBar>
           {canJoin ? (
-            <Link to={`/events/${event.id}/join`}>
-              <PrimaryButton fullWidth>{event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}</PrimaryButton>
-            </Link>
+            <PrimaryButton fullWidth onClick={openJoin}>
+              {event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}
+            </PrimaryButton>
+          ) : myPart?.status === 'waitlist' ? (
+            <PrimaryButton fullWidth disabled>Вы в резерве</PrimaryButton>
           ) : (
             <PrimaryButton fullWidth disabled>Заявка отправлена</PrimaryButton>
           )}
         </MobileActionBar>
       )}
+
+      {joinOpen && <EventJoinPanel event={event} onClose={() => setJoinOpen(false)} />}
     </div>
   )
 }

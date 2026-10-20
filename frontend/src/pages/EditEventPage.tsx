@@ -70,7 +70,7 @@ export function EditEventPage() {
   return (
     <div className="page-frame">
       <PageHeader title="Изменить событие" back />
-      <form onSubmit={(form) => void save(form)} className="mx-auto max-w-2xl space-y-4">
+      <form onSubmit={(form) => void save(form)} className="space-y-4">
         <label className="block text-sm text-muted">Формат
           <select value={eventType} onChange={(form) => setEventType(form.target.value as NonNullable<Event['eventType']>)} className="mt-1 w-full rounded-xl bg-card px-3 py-2.5 text-white"><option value="game">Игра</option><option value="training">Тренировка</option><option value="tournament">Турнир</option></select>
         </label>

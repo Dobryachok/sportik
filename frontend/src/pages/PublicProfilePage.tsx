@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { fetchUser, toggleUserFollow } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
+import { genderLabel } from '../data/interestCatalog'
 import type { User } from '../data/types'
 
 export function PublicProfilePage() {
@@ -28,6 +29,7 @@ export function PublicProfilePage() {
   const stats = user.stats ?? { events: 0, subscriptions: 0, followers: 0 }
   const canFollow = Boolean(currentUser && currentUser.id !== user.id)
   const additionalDetails = [
+    user.gender ? ['Пол', genderLabel(user.gender)] : null,
     user.age !== undefined ? ['Возраст', `${user.age} лет`] : null,
     user.maritalStatus ? ['Семейное положение', user.maritalStatus] : null,
     user.hasCar !== undefined && user.hasCar !== null ? ['Автомобиль', user.hasCar ? 'Есть' : 'Нет'] : null,
@@ -70,6 +72,16 @@ export function PublicProfilePage() {
           <div><p className="text-2xl font-bold text-accent">{stats.followers}</p><p className="mt-1 text-sm text-muted">подписчиков</p></div>
         </div>
       </section>
+      {user.interests && user.interests.length > 0 && (
+        <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
+          <h2 className="text-lg font-bold">Интересы</h2>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {user.interests.map((tag) => (
+              <span key={tag} className="rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-semibold text-accent">{tag}</span>
+            ))}
+          </div>
+        </section>
+      )}
       {user.bio && <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5"><h2 className="text-lg font-bold">О себе</h2><p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted">{user.bio}</p></section>}
       {additionalDetails.length > 0 && <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5"><h2 className="text-lg font-bold">Дополнительная информация</h2><dl className="mt-3 divide-y divide-white/10">{additionalDetails.map(([label, value]) => <div key={label} className="flex items-center justify-between gap-4 py-3 text-sm"><dt className="text-muted">{label}</dt><dd className="text-right font-semibold text-white">{value}</dd></div>)}</dl></section>}
       <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5"><h2 className="text-lg font-bold">Социальные сети</h2>

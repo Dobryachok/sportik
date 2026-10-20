@@ -10,7 +10,7 @@ export function Sidebar() {
   const items = visibleNavItems(Boolean(currentUser), Boolean(currentUser?.startCompleted))
 
   return (
-    <aside className="hidden md:flex md:w-56 md:shrink-0 md:flex-col md:border-r md:border-white/10 md:bg-card/30 md:px-3 md:py-6">
+    <aside className="hidden md:sticky md:top-0 md:flex md:h-[100dvh] md:w-56 md:shrink-0 md:flex-col md:overflow-y-auto md:border-r md:border-white/10 md:bg-card/30 md:px-3 md:py-6">
       <div className="mb-8 px-2">
         <span className="text-xl font-extrabold tracking-[-0.04em] text-accent">Спортик</span>
         <p className="mt-0.5 text-xs text-muted">Найдите свою игру</p>

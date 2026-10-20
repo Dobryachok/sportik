@@ -6,7 +6,7 @@ export type JoinMode = 'open' | 'application'
 
 export type EventStatus = 'published' | 'unpublished'
 
-export type ParticipationStatus = 'confirmed' | 'pending' | 'rejected' | 'cancelled'
+export type ParticipationStatus = 'confirmed' | 'pending' | 'rejected' | 'cancelled' | 'waitlist'
 
 export interface SocialLink {
   platform: string
@@ -27,6 +27,8 @@ export interface User {
   maritalStatus?: string | null
   hasCar?: boolean | null
   workSchedule?: string | null
+  gender?: 'male' | 'female' | 'unknown' | null
+  interests?: string[]
   startCompleted?: boolean
   viewerFollows?: boolean
   stats?: { events: number; subscriptions: number; followers: number }

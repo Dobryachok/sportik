@@ -93,7 +93,7 @@ export function CreateEventPage() {
   return (
     <div className="page-frame">
       <PageHeader title={eventType === 'tournament' ? 'Новый турнир' : 'Новое событие'} back />
-      <form onSubmit={submit} className="mx-auto max-w-2xl space-y-4">
+      <form onSubmit={submit} className="space-y-4">
         <label className="block text-sm">
           <span className="text-muted">Формат</span>
           <select value={eventType} onChange={(event) => setEventType(event.target.value as NonNullable<Event['eventType']>)} className="mt-1 w-full rounded-xl bg-card px-3 py-2 text-base outline-none focus:ring-1 focus:ring-accent">

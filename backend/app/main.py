@@ -174,6 +174,17 @@ def age_from_birth_date(value: date | None):
     return today.year - value.year - ((today.month, today.day) < (value.month, value.day))
 
 
+def interest_tags(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            value = []
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()][:20]
+
+
 def social_links(value):
     if isinstance(value, str):
         try:
@@ -211,9 +222,12 @@ def public_user(row):
         age = age_from_birth_date(row['birthDate'])
     if age is not None:
         result['age'] = int(age)
-    for key in ('maritalStatus', 'hasCar', 'workSchedule'):
+    for key in ('maritalStatus', 'hasCar', 'workSchedule', 'gender'):
         if row.get(key) is not None:
             result[key] = row[key]
+    tags = interest_tags(row.get('interests'))
+    if tags:
+        result['interests'] = tags
     return result
 
 
@@ -289,8 +303,8 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, 'Authentication required')
     digest = hashlib.sha256(token.encode()).hexdigest()
     user = (await session.execute(text("""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
-        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
-        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
+        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.gender,
+        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",p.interests,
         COALESCE(p.start_completed,false) AS "startCompleted",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
@@ -415,8 +429,8 @@ async def login(payload: Credentials, request: Request, response: Response, sess
     # Login is public: there is no cookie-authenticated state to protect yet.
     await throttle_auth(payload.email, 'login', 20)
     user = (await session.execute(text('''SELECT u.id,u.public_id,u.password_hash,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
-        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
-        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
+        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.gender,
+        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",p.interests,
         COALESCE(p.start_completed,false) AS "startCompleted",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
@@ -491,9 +505,32 @@ class ProfileInput(BaseModel):
     city: str | None = Field(default=None, max_length=150)
     birthDate: date | None = None
     maritalStatus: str | None = Field(default=None, max_length=50)
+    gender: str | None = None
     hasCar: bool | None = None
     workSchedule: str | None = Field(default=None, max_length=255)
     socialLinks: list[SocialLinkInput] | None = Field(default=None, max_length=5)
+    interests: list[str] | None = Field(default=None, max_length=20)
+
+    @field_validator('gender')
+    @classmethod
+    def clean_gender(cls, value):
+        if value in (None, ''):
+            return None
+        if value not in {'male', 'female', 'unknown'}:
+            raise ValueError('Gender must be male, female, or unknown')
+        return value
+
+    @field_validator('interests')
+    @classmethod
+    def clean_interests(cls, value):
+        if value is None:
+            return value
+        cleaned = []
+        for item in value:
+            tag = item.strip()
+            if tag and tag not in cleaned:
+                cleaned.append(tag[:40])
+        return cleaned[:20]
 
     @field_validator('name', 'city', 'bio', 'maritalStatus', 'workSchedule')
     @classmethod
@@ -519,14 +556,18 @@ async def patch_profile(payload: ProfileInput, user=Depends(require_user), sessi
     profile_columns = {
         'birthDate': 'birth_date',
         'maritalStatus': 'marital_status',
+        'gender': 'gender',
         'hasCar': 'has_car',
         'workSchedule': 'work_schedule',
         'socialLinks': 'social_links',
+        'interests': 'interests',
     }
     user_values = {key: value for key, value in values.items() if key in user_columns}
     profile_values = {key: value for key, value in values.items() if key in profile_columns}
     if 'socialLinks' in profile_values:
         profile_values['socialLinks'] = json.dumps(profile_values['socialLinks'])
+    if 'interests' in profile_values:
+        profile_values['interests'] = json.dumps(profile_values['interests'])
     await session.commit()
     async with session.begin():
         if user_values:
@@ -635,7 +676,7 @@ async def media(media_id: str, session: AsyncSession = Depends(db_session)):
 async def find_public_user(session: AsyncSession, public_id: str, viewer_id: int | None = None):
     user = (await session.execute(text('''SELECT u.id AS db_id,u.public_id AS id,u.name,COALESCE(u.city,'') AS city,
         u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,p.social_links AS "socialLinks",
-        p.marital_status AS "maritalStatus",p.has_car AS "hasCar",p.work_schedule AS "workSchedule",
+        p.marital_status AS "maritalStatus",p.gender,p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.interests,
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
         (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
@@ -712,6 +753,29 @@ async def event_rows(session, city: str | None, public_only=True):
     return events
 
 
+async def event_rows_by_public_ids(session, public_ids: list[str], public_only=True):
+    if not public_ids:
+        return []
+    where = 'e.public_id = ANY(:ids)'
+    if public_only:
+        where += " AND e.status='PUBLISHED'"
+    events = await rows(session, f'''SELECT e.id AS internal_id,e.public_id AS id,s.public_id AS "sportId",u.public_id AS "organizerUserId",
+      o.public_id AS "organizationId",o.name AS "organizationName",e.title,COALESCE(e.description,'') AS description,
+      COALESCE(e.location,'') AS address,e.district,e.city,e.start_at AS "startsAt",e.capacity,
+      e.join_mode AS "joinMode",CASE WHEN e.status='PUBLISHED' THEN 'published' ELSE 'unpublished' END AS status,e.level,
+      e.min_age AS "minAge",e.image_url AS "imageUrl",e.rating,e.event_type AS "eventType",
+      e.latitude::float AS latitude,e.longitude::float AS longitude,
+      (SELECT count(*) FROM event_registrations r WHERE r.event_id=e.id AND r.status='REGISTERED') AS "confirmedCount"
+      FROM events e JOIN sports s ON s.id=e.sport_id JOIN users u ON u.id=e.organizer_id
+      LEFT JOIN organizations o ON o.id=e.organization_id WHERE {where} ORDER BY e.start_at,e.id''', {'ids': public_ids})
+    for event in events:
+        event['startsAt'] = timestamp(event['startsAt'])
+        event['rating'] = float(event['rating'])
+        event['level'] = float(event['level'])
+        del event['internal_id']
+    return events
+
+
 async def notification_rows(session: AsyncSession, user_id: int):
     items = await rows(session, '''SELECT 'n-' || n.id AS id,n.type,n.title,n.message AS body,n.is_read AS "isRead",
        n.created_at AS "createdAt",e.public_id AS "eventId",o.public_id AS "organizationId",s.name AS "eventTag",e.start_at AS "eventStart"
@@ -743,16 +807,29 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
     selected_city = (city or settings.default_city or '').strip()
     # A missing city must not leak an unfiltered nationwide feed.
     events = await event_rows(session, selected_city) if selected_city else []
+    by_id = {event['id']: event for event in events}
+    favorites: list[str] = []
+    liked: list[str] = []
+    if user:
+        favorites = [row['id'] for row in await rows(session, '''SELECT e.public_id AS id FROM event_favorites f JOIN events e ON e.id=f.event_id
+            WHERE f.user_id=:user_id AND e.status='PUBLISHED' ORDER BY f.id''', {'user_id': user['db_id']})]
+        liked = [row['id'] for row in await rows(session, '''SELECT e.public_id AS id FROM event_likes f JOIN events e ON e.id=f.event_id
+            WHERE f.user_id=:user_id AND e.status='PUBLISHED' ORDER BY f.id''', {'user_id': user['db_id']})]
+        missing_favorites = [event_id for event_id in favorites if event_id not in by_id]
+        if missing_favorites:
+            for event in await event_rows_by_public_ids(session, missing_favorites):
+                by_id[event['id']] = event
+        events = sorted(by_id.values(), key=lambda item: (item['startsAt'], item['id']))
     event_ids = [e['id'] for e in events]
     if not event_ids:
         notifications = await notification_rows(session, user['db_id']) if user else []
         return dict(version=1, currentUserId=user['id'] if user else None, accounts=[], city=selected_city,
                     users=[public_user(user)] if user else [], organizations=[], sports=[], events=[], participations=[],
-                    comments=[], notifications=notifications, favorites=[], likedEvents=[])
+                    comments=[], notifications=notifications, favorites=favorites, likedEvents=liked)
     params = {'ids': event_ids, 'user_id': user['db_id'] if user else -1}
     users = await rows(session, '''SELECT DISTINCT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,
-       p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
-       p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
+       p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.gender,
+       p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",p.interests,
        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
        (SELECT count(*)::integer FROM events owner_events WHERE owner_events.organizer_id=u.id) AS "eventCount",
        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
@@ -777,19 +854,14 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
        WHERE e.public_id=ANY(:ids) AND c.status='VISIBLE' ORDER BY c.id''', params)
     for comment in comments: comment['createdAt'] = timestamp(comment['createdAt'])
     participations = []
-    favorites, liked = [], []
     notifications = []
     if user:
         notifications = await notification_rows(session, user['db_id'])
         participations = await rows(session, '''SELECT 'part-' || r.id AS id,e.public_id AS "eventId",u.public_id AS "userId",
-           CASE r.status WHEN 'REGISTERED' THEN 'confirmed' WHEN 'PENDING' THEN 'pending' WHEN 'CANCELLED' THEN 'cancelled' ELSE 'rejected' END AS status,r.registered_at AS "createdAt"
+           CASE r.status WHEN 'REGISTERED' THEN 'confirmed' WHEN 'PENDING' THEN 'pending' WHEN 'WAITLIST' THEN 'waitlist' WHEN 'CANCELLED' THEN 'cancelled' ELSE 'rejected' END AS status,r.registered_at AS "createdAt"
            FROM event_registrations r JOIN events e ON e.id=r.event_id JOIN users u ON u.id=r.user_id
            WHERE e.public_id=ANY(:ids) AND (r.user_id=:user_id OR e.organizer_id=:user_id) ORDER BY r.id''', params)
         for item in participations: item['createdAt'] = timestamp(item['createdAt'])
-        favorites = [x['id'] for x in await rows(session, '''SELECT e.public_id AS id FROM event_favorites f JOIN events e ON e.id=f.event_id
-            WHERE f.user_id=:user_id AND e.public_id=ANY(:ids)''', params)]
-        liked = [x['id'] for x in await rows(session, '''SELECT e.public_id AS id FROM event_likes f JOIN events e ON e.id=f.event_id
-            WHERE f.user_id=:user_id AND e.public_id=ANY(:ids)''', params)]
     return dict(version=1, currentUserId=user['id'] if user else None, accounts=[], city=selected_city,
                 users=[public_user(u) for u in users], organizations=[{**org, 'sports': []} for org in organizations],
                 sports=sports, events=events, participations=participations, comments=comments, notifications=notifications,
@@ -1251,6 +1323,9 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
             'capacity': payload.capacity, 'mode': payload.joinMode,
             'level': payload.level, 'age': payload.minAge,
         })
+        await notify_event_attendees(session, event['id'], 'Изменения в мероприятии',
+                                     f'Организатор обновил событие «{payload.title}». Проверьте дату, место и условия участия.',
+                                     exclude_user_id=user['db_id'])
         if payload.eventType == 'tournament' and event['event_type'] != 'tournament':
             recipients = await rows(session, '''SELECT DISTINCT candidate.user_id FROM (
                 SELECT e.organizer_id AS user_id FROM events e WHERE e.sport_id=:sport
@@ -1269,6 +1344,34 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
     return {'id': event_id}
 
 
+async def notify_event_attendees(session: AsyncSession, event_db_id: int, title: str, message: str, exclude_user_id: int | None = None):
+    recipients = await rows(session, '''SELECT DISTINCT r.user_id FROM event_registrations r
+        WHERE r.event_id=:event AND r.status IN ('REGISTERED','PENDING','WAITLIST')
+        AND (:exclude IS NULL OR r.user_id <> :exclude)''', {'event': event_db_id, 'exclude': exclude_user_id})
+    for recipient in recipients:
+        await session.execute(text('''INSERT INTO notifications(user_id,event_id,type,title,message)
+            VALUES (:user,:event,'event_updated',:title,:message)'''), {
+                'user': recipient['user_id'], 'event': event_db_id, 'title': title, 'message': message,
+            })
+
+
+async def promote_waitlist(session: AsyncSession, event_db_id: int, event_public_id: str, event_title: str):
+    """Move the earliest waitlisted user into the main roster when a seat opens."""
+    waitlisted = (await session.execute(text('''SELECT r.id,r.user_id FROM event_registrations r
+        WHERE r.event_id=:event AND r.status='WAITLIST' ORDER BY r.registered_at,r.id
+        LIMIT 1 FOR UPDATE'''), {'event': event_db_id})).mappings().first()
+    if not waitlisted:
+        return
+    await session.execute(text("UPDATE event_registrations SET status='REGISTERED',registered_at=now() WHERE id=:id"),
+                          {'id': waitlisted['id']})
+    await session.execute(text('''INSERT INTO notifications(user_id,event_id,type,title,message)
+        VALUES (:user,:event,'waitlist_promoted',:title,:message)'''), {
+            'user': waitlisted['user_id'], 'event': event_db_id,
+            'title': 'Место освободилось',
+            'message': f'Вы переведены из резерва в участники события «{event_title}».',
+        })
+
+
 async def create_event_chat_activity(session: AsyncSession, event_db_id: int, event_id: str, user: dict, kind: str):
     """Persist a join/leave line in the same ordered history as chat messages."""
     verb = 'присоединился(-ась) к мероприятию' if kind == 'PARTICIPANT_JOINED' else 'покинул(-а) мероприятие'
@@ -1285,15 +1388,19 @@ async def join(event_id: str, user=Depends(require_user), session: AsyncSession 
     activity = None
     await session.commit()
     async with session.begin():
-        event = (await session.execute(text("SELECT id,organizer_id,capacity,join_mode,status FROM events WHERE public_id=:id FOR UPDATE"), {'id': event_id})).mappings().first()
+        event = (await session.execute(text("SELECT id,organizer_id,capacity,join_mode,status,title FROM events WHERE public_id=:id FOR UPDATE"), {'id': event_id})).mappings().first()
         if not event or event['status'] != 'PUBLISHED': raise HTTPException(404, 'Published event not found')
-        if event['organizer_id'] == user['db_id']: raise HTTPException(409, 'Organizers cannot join their own event')
         existing = (await session.execute(text('SELECT id,status FROM event_registrations WHERE event_id=:event AND user_id=:user'),
                                                {'event': event['id'], 'user': user['db_id']})).mappings().first()
-        if existing and existing['status'] != 'CANCELLED': raise HTTPException(409, 'Already joined')
+        if existing and existing['status'] != 'CANCELLED':
+            raise HTTPException(409, 'Already joined')
         registered = await session.scalar(text("SELECT count(*) FROM event_registrations WHERE event_id=:event AND status='REGISTERED'"), {'event': event['id']})
-        if registered >= event['capacity'] and event['join_mode'] == 'open': raise HTTPException(409, 'Event is full')
-        result = 'REGISTERED' if event['join_mode'] == 'open' else 'PENDING'
+        if registered >= event['capacity']:
+            result = 'WAITLIST'
+        elif event['join_mode'] == 'open':
+            result = 'REGISTERED'
+        else:
+            result = 'PENDING'
         if existing:
             await session.execute(text('UPDATE event_registrations SET status=:status,registered_at=now() WHERE id=:id'), {'status': result, 'id': existing['id']})
         else:
@@ -1301,11 +1408,18 @@ async def join(event_id: str, user=Depends(require_user), session: AsyncSession 
                                   {'event': event['id'], 'user': user['db_id'], 'status': result})
         if result == 'REGISTERED':
             activity = await create_event_chat_activity(session, event['id'], event_id, user, 'PARTICIPANT_JOINED')
+        elif result == 'WAITLIST':
+            await session.execute(text('''INSERT INTO notifications(user_id,event_id,type,title,message)
+                VALUES (:user,:event,'waitlist_joined',:title,:message)'''), {
+                    'user': user['db_id'], 'event': event['id'],
+                    'title': 'Вы в резерве',
+                    'message': f'Все места на «{event["title"]}» заняты. Мы уведомим, если освободится место.',
+                })
         await mark_start_completed_if_ready(session, user)
     await restart_redis_cache()
     if activity:
         await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})
-    return {'status': 'confirmed' if result == 'REGISTERED' else 'pending'}
+    return {'status': 'confirmed' if result == 'REGISTERED' else 'waitlist' if result == 'WAITLIST' else 'pending'}
 
 
 @app.delete('/api/v1/events/{event_id}/join', status_code=status.HTTP_204_NO_CONTENT)
@@ -1319,8 +1433,10 @@ async def leave_event(event_id: str, user=Depends(require_user), session: AsyncS
             FOR UPDATE OF r,e'''), {'event': event_id, 'user': user['db_id']})).mappings().first()
         if not registration:
             raise HTTPException(404, 'Confirmed participation not found')
+        event_row = (await session.execute(text('SELECT title FROM events WHERE id=:id'), {'id': registration['event_db_id']})).mappings().first()
         await session.execute(text("UPDATE event_registrations SET status='CANCELLED' WHERE id=:id"), {'id': registration['id']})
         activity = await create_event_chat_activity(session, registration['event_db_id'], event_id, user, 'PARTICIPANT_LEFT')
+        await promote_waitlist(session, registration['event_db_id'], event_id, event_row['title'] if event_row else 'событие')
     await restart_redis_cache()
     await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})
 

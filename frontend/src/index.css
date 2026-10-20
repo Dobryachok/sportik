@@ -123,7 +123,7 @@ textarea {
   .page-frame {
     width: 100%;
     min-width: 0;
-    max-width: 72rem;
+    max-width: 48rem;
     margin-inline: auto;
   }
 
