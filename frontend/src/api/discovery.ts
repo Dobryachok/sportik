@@ -83,11 +83,22 @@ export const acceptTeamEmailInvite = (inviteId: number) =>
 export const declineTeamEmailInvite = (inviteId: number) =>
   request<{ status: string }>(`/teams/invites/${inviteId}/decline`, { method: 'POST' })
 
-export const leaveTeam = (teamId: string, newCaptainId?: string) =>
-  request<{ ok: boolean }>(`/teams/${encodeURIComponent(teamId)}/leave`, {
+export const leaveTeam = (teamId: string) =>
+  request<{ ok: boolean }>(`/teams/${encodeURIComponent(teamId)}/leave`, { method: 'POST', body: '{}' })
+
+export const transferTeamCaptain = (teamId: string, newCaptainId: string) =>
+  request<{ ok: boolean; newCaptainId: string }>(`/teams/${encodeURIComponent(teamId)}/transfer-captain`, {
     method: 'POST',
-    body: JSON.stringify(newCaptainId ? { newCaptainId } : {}),
+    body: JSON.stringify({ newCaptainId }),
   })
+
+export const removeTeamMember = (teamId: string, memberId: string) =>
+  request<{ ok: boolean }>(`/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(memberId)}`, {
+    method: 'DELETE',
+  })
+
+export const dissolveTeam = (teamId: string) =>
+  request<{ ok: boolean }>(`/teams/${encodeURIComponent(teamId)}/dissolve`, { method: 'POST', body: '{}' })
 
 export const uploadTeamLogo = (teamId: string, file: File) => {
   const body = new FormData()

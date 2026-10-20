@@ -48,30 +48,35 @@ export function EventsFeedPage() {
           </Link>
         </div>
         {state.sports.length ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-4 min-[520px]:grid-cols-2">
             {state.sports.map((sport, index) => (
               <Link
                 key={sport.id}
                 to={`/sport/${sport.slug}`}
                 style={{ aspectRatio: '1 / 1' }}
-                className={`group relative overflow-hidden rounded-[1.3rem] border border-white/[0.08] bg-gradient-to-br p-5 sm:p-6 ${
-                  sport.backgroundImage ? '' : sportTones[index % sportTones.length]
+                className={`group relative overflow-hidden rounded-[1.45rem] border border-white/[0.08] bg-gradient-to-br p-6 sm:p-8 ${
+                  sport.backgroundImage ? 'sport-tile-photo' : sportTones[index % sportTones.length]
                 }`}
               >
                 {sport.backgroundImage && (
                   <>
                     <img src={sport.backgroundImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
-                    <span className="absolute inset-0 bg-black/35" aria-hidden />
+                    <span className="absolute inset-0 bg-black/40" aria-hidden />
                   </>
                 )}
-                <span className="absolute -right-3 -top-8 text-[6.75rem] font-bold leading-none text-white/[0.055]" aria-hidden>
-                  {sport.name.slice(0, 1)}
-                </span>
                 <div className="relative flex h-full flex-col justify-between">
-                  <span className={`text-lg font-bold leading-tight sm:text-xl ${sport.backgroundImage ? 'text-white' : 'text-black'}`}>
+                  <span
+                    className={`sport-tile-title text-xl font-bold leading-tight sm:text-2xl ${
+                      sport.backgroundImage ? 'text-white' : 'text-black'
+                    }`}
+                  >
                     {sport.name}
                   </span>
-                  <span className={`text-sm ${sport.backgroundImage ? 'text-white/85' : 'text-black/65'}`}>
+                  <span
+                    className={`sport-tile-meta text-sm sm:text-base ${
+                      sport.backgroundImage ? 'text-white/90' : 'text-black/65'
+                    }`}
+                  >
                     {sport.eventCount ?? state.events.filter((event) => event.sportId === sport.id).length} мероприятий
                   </span>
                 </div>

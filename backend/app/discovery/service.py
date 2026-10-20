@@ -815,12 +815,7 @@ async def decline_team_email_invite(session: AsyncSession, invite_id: int, user_
     return {'status': 'DECLINED'}
 
 
-async def leave_team(
-    session: AsyncSession,
-    team_public_id: str,
-    user_id: int,
-    new_captain_public_id: str | None = None,
-) -> dict:
+async def leave_team(session: AsyncSession, team_public_id: str, user_id: int) -> dict:
     team_id = await resolve_team_db_id(session, team_public_id)
     team_status = await session.scalar(text("SELECT status FROM teams WHERE id = :id"), {'id': team_id})
     if team_status != 'ACTIVE':
@@ -831,37 +826,93 @@ async def leave_team(
     )
     if not role:
         raise HTTPException(404, 'You are not a member of this team')
-    member_count = int(
-        await session.scalar(text('SELECT count(*) FROM team_members WHERE team_id = :team'), {'team': team_id}) or 0
-    )
     if role == 'CAPTAIN':
-        if member_count <= 1:
-            raise HTTPException(
-                409,
-                'Нельзя выйти из команды, пока вы являетесь единственным капитаном. Сначала распустите команду или передайте управление.',
-            )
-        if not new_captain_public_id:
-            raise HTTPException(422, 'Select a new captain before leaving the team')
-        new_captain_id = await resolve_user_db_id(session, new_captain_public_id)
-        if new_captain_id == user_id:
-            raise HTTPException(422, 'Select another team member as captain')
-        is_member = await session.scalar(
-            text('SELECT 1 FROM team_members WHERE team_id = :team AND user_id = :user'),
-            {'team': team_id, 'user': new_captain_id},
-        )
-        if not is_member:
-            raise HTTPException(422, 'New captain must be a current team member')
-        await session.execute(
-            text("UPDATE team_members SET role = 'MEMBER' WHERE team_id = :team AND user_id = :user AND role = 'CAPTAIN'"),
-            {'team': team_id, 'user': user_id},
-        )
-        await session.execute(
-            text("UPDATE team_members SET role = 'CAPTAIN' WHERE team_id = :team AND user_id = :user"),
-            {'team': team_id, 'user': new_captain_id},
+        raise HTTPException(
+            409,
+            'Капитан не может выйти из команды. Передайте капитанство другому участнику или распустите команду.',
         )
     await session.execute(
         text('DELETE FROM team_members WHERE team_id = :team AND user_id = :user'),
         {'team': team_id, 'user': user_id},
+    )
+    return {'ok': True}
+
+
+async def transfer_team_captain(
+    session: AsyncSession,
+    team_public_id: str,
+    actor_id: int,
+    new_captain_public_id: str,
+) -> dict:
+    team_id = await resolve_team_db_id(session, team_public_id)
+    role = await session.scalar(
+        text('SELECT role FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': team_id, 'user': actor_id},
+    )
+    if role != 'CAPTAIN':
+        raise HTTPException(403, 'Only the team captain can transfer captaincy')
+    new_captain_id = await resolve_user_db_id(session, new_captain_public_id)
+    if new_captain_id == actor_id:
+        raise HTTPException(422, 'Select another team member as captain')
+    is_member = await session.scalar(
+        text('SELECT 1 FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': team_id, 'user': new_captain_id},
+    )
+    if not is_member:
+        raise HTTPException(422, 'New captain must be a current team member')
+    await session.execute(
+        text("UPDATE team_members SET role = 'MEMBER' WHERE team_id = :team AND role = 'CAPTAIN'"),
+        {'team': team_id},
+    )
+    await session.execute(
+        text("UPDATE team_members SET role = 'CAPTAIN' WHERE team_id = :team AND user_id = :user"),
+        {'team': team_id, 'user': new_captain_id},
+    )
+    return {'ok': True, 'newCaptainId': new_captain_public_id}
+
+
+async def remove_team_member(
+    session: AsyncSession,
+    team_public_id: str,
+    manager_id: int,
+    member_public_id: str,
+) -> dict:
+    team_id = await resolve_team_db_id(session, team_public_id)
+    await assert_team_manager(session, team_id, manager_id)
+    member_id = await resolve_user_db_id(session, member_public_id)
+    if member_id == manager_id:
+        raise HTTPException(422, 'Use leave or dissolve flow for yourself')
+    target_role = await session.scalar(
+        text('SELECT role FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': team_id, 'user': member_id},
+    )
+    if not target_role:
+        raise HTTPException(404, 'User is not a member of this team')
+    if target_role == 'CAPTAIN':
+        raise HTTPException(409, 'Cannot remove the captain. Transfer captaincy first.')
+    await session.execute(
+        text('DELETE FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': team_id, 'user': member_id},
+    )
+    return {'ok': True}
+
+
+async def dissolve_team(session: AsyncSession, team_public_id: str, captain_id: int) -> dict:
+    team_id = await resolve_team_db_id(session, team_public_id)
+    role = await session.scalar(
+        text('SELECT role FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': team_id, 'user': captain_id},
+    )
+    if role != 'CAPTAIN':
+        raise HTTPException(403, 'Only the team captain can dissolve the team')
+    await session.execute(
+        text("UPDATE team_join_requests SET status = 'REJECTED', reviewed_at = now() WHERE team_id = :team AND status = 'PENDING'"),
+        {'team': team_id},
+    )
+    await session.execute(text('DELETE FROM team_members WHERE team_id = :team'), {'team': team_id})
+    await session.execute(
+        text("UPDATE teams SET status = 'DISSOLVED', updated_at = now() WHERE id = :id"),
+        {'id': team_id},
     )
     return {'ok': True}
 

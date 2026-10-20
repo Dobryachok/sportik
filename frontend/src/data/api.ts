@@ -153,7 +153,10 @@ export const uploadSportBackground = (sportId: string, file: File) => {
 }
 
 export const deleteSportBackground = (sportId: string) =>
-  request<void>(`/admin/sports/${encodeURIComponent(sportId)}/background`, { method: 'DELETE' })
+  request<{ ok: boolean }>(`/admin/sports/${encodeURIComponent(sportId)}/background`, { method: 'DELETE' })
+
+export const deleteApprovedSport = (sportId: string) =>
+  request<{ ok: boolean }>(`/admin/sports/${encodeURIComponent(sportId)}`, { method: 'DELETE' })
 export const fetchEventParticipants = (eventId: string) => request<User[]>(`/events/${encodeURIComponent(eventId)}/participants`)
 export const fetchComments = (eventId: string) => request<Comment[]>(`/events/${encodeURIComponent(eventId)}/comments`)
 export const createEvent = (input: CreateEventInput) => request<{ id: string }>('/events', { method: 'POST', body: JSON.stringify(input) })

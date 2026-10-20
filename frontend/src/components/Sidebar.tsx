@@ -23,8 +23,8 @@ export function Sidebar() {
             <Link
               key={item.to}
               to={item.to}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
-                active ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-white/5 hover:text-white'
+              className={`app-nav-item flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+                active ? 'app-nav-item-active bg-accent/15 text-accent' : 'text-muted'
               }`}
             >
               <Icon size={20} />
@@ -32,7 +32,17 @@ export function Sidebar() {
             </Link>
           )
         })}
-        {currentUser?.role === 'admin' && <Link to="/admin" className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${pathname === '/admin' ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-white/5 hover:text-white'}`}><ShieldCheck size={20} />Администрирование</Link>}
+        {currentUser?.role === 'admin' && (
+          <Link
+            to="/admin"
+            className={`app-nav-item flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+              pathname === '/admin' ? 'app-nav-item-active bg-accent/15 text-accent' : 'text-muted'
+            }`}
+          >
+            <ShieldCheck size={20} />
+            Администрирование
+          </Link>
+        )}
       </nav>
       <div className="mt-auto px-2 pt-6"><ThemeToggle /></div>
     </aside>

@@ -6,6 +6,7 @@ import { SportikModel } from './sportik/SportikModel'
 import { ChevronDown, ChevronLeft, ChevronUp, Lock, Palette, ShoppingBag, Trophy } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
+import { useTheme } from '../app/ThemeContext'
 import {
   readClosedChallenges,
   sportikChallenges,
@@ -63,6 +64,8 @@ type PanelView = 'home' | 'challenges' | 'challenge-detail' | 'shop'
 
 export function SportikPage() {
   const { currentUser, state } = useAppData()
+  const { theme } = useTheme()
+  const sceneBackground = theme === 'dark' ? '#0d0f11' : '#ffffff'
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [menuOpen, setMenuOpen] = useState(true)
@@ -143,7 +146,7 @@ export function SportikPage() {
         gl={{ antialias: true }}
         dpr={[1, 2]}
       >
-        <color attach="background" args={['#ffffff']} />
+        <color attach="background" args={[sceneBackground]} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[4, 6, 4]} intensity={1.3} />
         <directionalLight position={[-3, 2, -2]} intensity={0.35} />

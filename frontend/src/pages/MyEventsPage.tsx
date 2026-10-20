@@ -62,7 +62,7 @@ export function MyEventsPage() {
             <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-xs font-semibold text-muted">{events.length}</span>
           )}
         </div>
-        <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 gap-4 min-[720px]:grid-cols-2">
           {events.map((event) => {
             const participants = getEventParticipants(state, event.id)
             const sport = state.sports.find((item) => item.id === event.sportId)

@@ -88,7 +88,7 @@ export function EventCalendarPicker({ open, selected, markedDays, onClose, onSel
             )
           })}
         </div>
-        <p className="mt-3 text-center text-xs text-muted">Точка — в этот день есть мероприятия</p>
+        <p className="mt-3 text-center text-xs text-muted">Точка — в этот день есть мероприятия с учётом выбранных фильтров</p>
       </div>
     </div>
   )

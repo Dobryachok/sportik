@@ -7,8 +7,11 @@ import {
   fetchTeamJoinRequests,
   inviteTeamByEmail,
   joinTeamRequest,
+  dissolveTeam,
   leaveTeam,
   rejectJoinRequest,
+  removeTeamMember,
+  transferTeamCaptain,
   uploadTeamLogo,
 } from '../api/discovery'
 import { useAppData } from '../app/AppDataContext'
@@ -38,8 +41,9 @@ export function TeamDetailPage() {
   const [inviteBusy, setInviteBusy] = useState(false)
   const [logoBusy, setLogoBusy] = useState(false)
   const [leaveOpen, setLeaveOpen] = useState(false)
-  const [leaveBusy, setLeaveBusy] = useState(false)
-  const [newCaptainId, setNewCaptainId] = useState('')
+  const [dissolveOpen, setDissolveOpen] = useState(false)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [transferCaptainId, setTransferCaptainId] = useState('')
   const logoInputRef = useRef<HTMLInputElement>(null)
 
   const loadTeam = () => {
@@ -149,20 +153,64 @@ export function TeamDetailPage() {
   const isMember = Boolean(team.viewerRole)
   const isCaptain = team.viewerRole === 'CAPTAIN'
   const captainTransferCandidates = team.members.filter((member) => member.id !== currentUser?.id)
-  const soleCaptain = isCaptain && team.membersCount <= 1
 
   const confirmLeave = async () => {
-    if (leaveBusy) return
-    setLeaveBusy(true)
+    if (actionBusy) return
+    setActionBusy(true)
     setError('')
     try {
-      await leaveTeam(teamId, isCaptain && team.membersCount > 1 ? newCaptainId || undefined : undefined)
+      await leaveTeam(teamId)
       setLeaveOpen(false)
       navigate('/profile')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось выйти из команды.')
     } finally {
-      setLeaveBusy(false)
+      setActionBusy(false)
+    }
+  }
+
+  const confirmDissolve = async () => {
+    if (actionBusy) return
+    setActionBusy(true)
+    setError('')
+    try {
+      await dissolveTeam(teamId)
+      setDissolveOpen(false)
+      navigate('/profile')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось распустить команду.')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const submitTransferCaptain = async () => {
+    const nextCaptainId = transferCaptainId || captainTransferCandidates[0]?.id
+    if (!nextCaptainId || actionBusy) return
+    setActionBusy(true)
+    setError('')
+    try {
+      await transferTeamCaptain(teamId, nextCaptainId)
+      loadTeam()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось передать капитанство.')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const removeMember = async (memberId: string) => {
+    if (actionBusy) return
+    if (!window.confirm('Исключить участника из команды?')) return
+    setActionBusy(true)
+    setError('')
+    try {
+      await removeTeamMember(teamId, memberId)
+      loadTeam()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось исключить участника.')
+    } finally {
+      setActionBusy(false)
     }
   }
 
@@ -223,16 +271,22 @@ export function TeamDetailPage() {
             {joinBusy ? 'Отправляем…' : 'Подать заявку на вступление'}
           </PrimaryButton>
         )}
-        {isMember && (
+        {isMember && !isCaptain && (
           <button
             type="button"
             className="mt-4 w-full rounded-xl border border-warning/40 px-4 py-2.5 text-sm font-semibold text-warning"
-            onClick={() => {
-              setNewCaptainId(captainTransferCandidates[0]?.id ?? '')
-              setLeaveOpen(true)
-            }}
+            onClick={() => setLeaveOpen(true)}
           >
             Выйти из команды
+          </button>
+        )}
+        {isCaptain && (
+          <button
+            type="button"
+            className="mt-4 w-full rounded-xl border border-rose-400/40 px-4 py-2.5 text-sm font-semibold text-rose-300"
+            onClick={() => setDissolveOpen(true)}
+          >
+            Распустить команду
           </button>
         )}
         <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
@@ -317,21 +371,55 @@ export function TeamDetailPage() {
         </section>
       )}
 
+      {isCaptain && captainTransferCandidates.length > 0 && (
+        <section className="mt-5 rounded-[1.75rem] border border-white/10 bg-card p-5">
+          <h2 className="text-lg font-bold">Передать капитанство</h2>
+          <p className="mt-1 text-sm text-muted">Капитан не может выйти из команды — только передать роль или распустить команду.</p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <select
+              value={transferCaptainId || captainTransferCandidates[0]?.id || ''}
+              onChange={(event) => setTransferCaptainId(event.target.value)}
+              className="min-h-11 flex-1 rounded-xl border border-white/10 bg-bg px-3 text-sm text-white outline-none focus:border-accent"
+            >
+              {captainTransferCandidates.map((member) => (
+                <option key={member.id} value={member.id}>{member.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={actionBusy}
+              onClick={() => void submitTransferCaptain()}
+              className="min-h-11 rounded-xl bg-accent px-4 text-sm font-bold text-white disabled:opacity-50"
+            >
+              {actionBusy ? 'Сохраняем…' : 'Передать'}
+            </button>
+          </div>
+        </section>
+      )}
+
       <section className="mt-5 rounded-[1.75rem] border border-white/10 bg-card p-5">
         <h2 className="text-lg font-bold">Участники</h2>
         <div className="mt-3 space-y-3">
           {team.members.map((member) => (
-            <Link
-              key={member.id}
-              to={`/users/${member.id}`}
-              className="flex items-center gap-3 rounded-xl border border-white/10 px-3 py-2"
-            >
-              <img src={member.avatarUrl || '/images/hero.png'} alt="" className="h-10 w-10 rounded-full object-cover" />
-              <div>
-                <p className="font-semibold text-white">{member.name}</p>
-                <p className="text-xs text-muted">{teamRoleLabel(member.role)}</p>
-              </div>
-            </Link>
+            <div key={member.id} className="flex items-center gap-3 rounded-xl border border-white/10 px-3 py-2">
+              <Link to={`/users/${member.id}`} className="flex min-w-0 flex-1 items-center gap-3">
+                <img src={member.avatarUrl || '/images/hero.png'} alt="" className="h-10 w-10 rounded-full object-cover" />
+                <div>
+                  <p className="font-semibold text-white">{member.name}</p>
+                  <p className="text-xs text-muted">{teamRoleLabel(member.role)}</p>
+                </div>
+              </Link>
+              {team.canManage && member.id !== currentUser?.id && member.role !== 'CAPTAIN' && (
+                <button
+                  type="button"
+                  disabled={actionBusy}
+                  onClick={() => void removeMember(member.id)}
+                  className="shrink-0 rounded-lg border border-warning/50 px-2.5 py-1.5 text-xs font-semibold text-warning disabled:opacity-50"
+                >
+                  Исключить
+                </button>
+              )}
+            </div>
           ))}
         </div>
         <div className="mt-4">
@@ -359,44 +447,40 @@ export function TeamDetailPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-card p-5 shadow-2xl">
             <h3 className="text-lg font-bold text-white">Выйти из команды «{team.name}»?</h3>
-            {soleCaptain ? (
-              <p className="mt-3 text-sm text-muted">
-                Нельзя выйти из команды, пока вы являетесь единственным капитаном. Сначала распустите команду или передайте управление.
-              </p>
-            ) : (
-              <p className="mt-3 text-sm text-muted">
-                После выхода вы перестанете быть участником команды.
-              </p>
-            )}
-            {isCaptain && !soleCaptain && captainTransferCandidates.length > 0 && (
-              <label className="mt-4 block text-sm text-muted">
-                Новый капитан
-                <select
-                  value={newCaptainId}
-                  onChange={(event) => setNewCaptainId(event.target.value)}
-                  className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3 py-2.5 text-sm text-white"
-                >
-                  {captainTransferCandidates.map((member) => (
-                    <option key={member.id} value={member.id}>{member.name}</option>
-                  ))}
-                </select>
-              </label>
-            )}
+            <p className="mt-3 text-sm text-muted">После выхода вы перестанете быть участником команды.</p>
             <div className="mt-5 flex gap-2">
-              <button
-                type="button"
-                className="flex-1 rounded-xl border border-white/15 px-3 py-2.5 text-sm font-semibold text-white"
-                onClick={() => setLeaveOpen(false)}
-              >
+              <button type="button" className="flex-1 rounded-xl border border-white/15 px-3 py-2.5 text-sm font-semibold text-white" onClick={() => setLeaveOpen(false)}>
                 Отмена
               </button>
               <button
                 type="button"
-                disabled={leaveBusy || soleCaptain || (isCaptain && team.membersCount > 1 && !newCaptainId)}
+                disabled={actionBusy}
                 className="flex-1 rounded-xl bg-warning/90 px-3 py-2.5 text-sm font-bold text-bg disabled:opacity-50"
                 onClick={() => void confirmLeave()}
               >
-                {leaveBusy ? 'Выходим…' : 'Выйти'}
+                {actionBusy ? 'Выходим…' : 'Выйти'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dissolveOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-card p-5 shadow-2xl">
+            <h3 className="text-lg font-bold text-white">Распустить команду «{team.name}»?</h3>
+            <p className="mt-3 text-sm text-muted">Команда будет удалена для всех участников. Это действие нельзя отменить.</p>
+            <div className="mt-5 flex gap-2">
+              <button type="button" className="flex-1 rounded-xl border border-white/15 px-3 py-2.5 text-sm font-semibold text-white" onClick={() => setDissolveOpen(false)}>
+                Отмена
+              </button>
+              <button
+                type="button"
+                disabled={actionBusy}
+                className="flex-1 rounded-xl bg-rose-500 px-3 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+                onClick={() => void confirmDissolve()}
+              >
+                {actionBusy ? 'Расформировываем…' : 'Распустить'}
               </button>
             </div>
           </div>

@@ -22,6 +22,7 @@ export function EventCard({
   scheduleTag,
 }: EventCardProps) {
   const { date, day, time } = formatEventDate(event.startsAt)
+  const coverImage = event.imageUrl?.trim() || ''
 
   return (
     <div className="flex min-w-0 max-w-full gap-3 sm:gap-4">
@@ -36,38 +37,77 @@ export function EventCard({
       )}
       <Link
         to={`/events/${event.id}`}
-        className="group relative min-w-0 flex-1 overflow-hidden rounded-[1.35rem] border border-black/10 bg-white px-4 py-4 shadow-[0_14px_28px_rgba(0,0,0,0.16)] transition-colors hover:bg-neutral-50 focus-visible:outline-none sm:px-5"
+        className={`group relative min-w-0 flex-1 overflow-hidden rounded-[1.45rem] border border-black/10 shadow-[0_14px_28px_rgba(0,0,0,0.16)] transition-colors focus-visible:outline-none ${
+          coverImage ? 'event-card-photo min-h-[11.5rem]' : 'bg-white px-4 py-4 hover:bg-neutral-50 sm:px-5'
+        }`}
       >
-        <span className="absolute bottom-4 left-0 top-4 w-1 rounded-r-full bg-accent-line" />
-        <div className="pl-2.5">
+        {coverImage ? (
+          <>
+            <img src={coverImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <span className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/45 to-black/25" aria-hidden />
+          </>
+        ) : (
+          <span className="absolute bottom-4 left-0 top-4 w-1 rounded-r-full bg-accent-line" />
+        )}
+        <div className={coverImage ? 'relative flex h-full min-h-[11.5rem] flex-col justify-end p-5 sm:p-6' : 'pl-2.5'}>
           <div className="mb-3 flex items-start gap-2 md:hidden">
-            <span className="rounded-lg bg-black/5 px-2 py-1 text-[11px] font-medium text-black/80">
+            <span
+              className={`rounded-lg px-2 py-1 text-[11px] font-medium ${
+                coverImage ? 'bg-black/35 text-white' : 'bg-black/5 text-black/80'
+              }`}
+            >
               {date} · {day} · {time}
             </span>
           </div>
           <div className="mb-3 flex flex-wrap gap-1.5">
             {sport && (
-              <span className="rounded-full border border-accent/60 px-2.5 py-1 text-[11px] font-semibold text-accent">
+              <span
+                className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                  coverImage ? 'border border-white/40 text-white' : 'border border-accent/60 text-accent'
+                }`}
+              >
                 {sport.name}
               </span>
             )}
-            {event.eventType === 'tournament' && <span className="rounded-full border border-warning/70 px-2.5 py-1 text-[11px] font-semibold text-warning">Турнир</span>}
-            {scheduleTag === 'upcoming' && <span className="rounded-full border border-accent/50 bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">Скоро</span>}
-            {scheduleTag === 'past' && <span className="rounded-full border border-black/20 bg-black/5 px-2.5 py-1 text-[11px] font-semibold text-black/60">Прошло</span>}
+            {event.eventType === 'tournament' && (
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${coverImage ? 'border-warning/70 text-warning' : 'border-warning/70 text-warning'}`}>
+                Турнир
+              </span>
+            )}
+            {scheduleTag === 'upcoming' && (
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${coverImage ? 'border-white/40 text-white' : 'border-accent/50 bg-accent/10 text-accent'}`}>
+                Скоро
+              </span>
+            )}
+            {scheduleTag === 'past' && (
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${coverImage ? 'border-white/30 text-white/80' : 'border-black/20 bg-black/5 text-black/60'}`}>
+                Прошло
+              </span>
+            )}
             {event.district && (
-              <span className="rounded-full border border-black/15 px-2.5 py-1 text-[11px] font-medium text-black/70">
+              <span
+                className={`rounded-full border px-2.5 py-1 text-[11px] font-medium ${
+                  coverImage ? 'border-white/30 text-white/90' : 'border-black/15 text-black/70'
+                }`}
+              >
                 {event.district}
               </span>
             )}
           </div>
-          <h3 className="break-words text-[1.03rem] font-bold leading-snug tracking-[-0.015em] text-black group-hover:text-black">
+          <h3
+            className={`event-card-title break-words text-lg font-bold leading-snug tracking-[-0.015em] sm:text-xl ${
+              coverImage ? 'text-white' : 'text-black group-hover:text-black'
+            }`}
+          >
             {event.title}
           </h3>
-          <p className="mt-1.5 break-words text-sm leading-snug text-black/70">{event.address}</p>
+          <p className={`event-card-meta mt-1.5 break-words text-sm leading-snug ${coverImage ? 'text-white/90' : 'text-black/70'}`}>
+            {event.address}
+          </p>
           <div className="mt-4 flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2.5">
               <AvatarStack urls={participantAvatars} />
-              <span className="truncate text-xs text-black/70">
+              <span className={`event-card-meta truncate text-xs ${coverImage ? 'text-white/85' : 'text-black/70'}`}>
                 {participantCount} из {event.capacity} чел.
               </span>
             </div>

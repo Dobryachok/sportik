@@ -26,8 +26,8 @@ class TeamInviteBody(BaseModel):
     email: str = Field(min_length=3, max_length=254)
 
 
-class TeamLeaveBody(BaseModel):
-    newCaptainId: str | None = Field(default=None, max_length=80)
+class TransferCaptainBody(BaseModel):
+    newCaptainId: str = Field(min_length=2, max_length=80)
 
 
 def register(app):
@@ -292,20 +292,46 @@ def register(app):
         return result
 
     @router.post('/teams/{team_id}/leave')
-    async def leave_team_route(
+    async def leave_team_route(team_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+        await session.commit()
+        async with session.begin():
+            result = await service.leave_team(session, team_id, user['db_id'])
+        await restart_redis_cache()
+        return result
+
+    @router.post('/teams/{team_id}/transfer-captain')
+    async def transfer_captain_route(
         team_id: str,
-        payload: TeamLeaveBody | None = None,
+        payload: TransferCaptainBody,
         user=Depends(require_user),
         session: AsyncSession = Depends(db_session),
     ):
         await session.commit()
         async with session.begin():
-            result = await service.leave_team(
-                session,
-                team_id,
-                user['db_id'],
-                payload.newCaptainId if payload else None,
+            result = await service.transfer_team_captain(
+                session, team_id, user['db_id'], payload.newCaptainId
             )
+        await restart_redis_cache()
+        return result
+
+    @router.delete('/teams/{team_id}/members/{member_id}')
+    async def remove_team_member_route(
+        team_id: str,
+        member_id: str,
+        user=Depends(require_user),
+        session: AsyncSession = Depends(db_session),
+    ):
+        await session.commit()
+        async with session.begin():
+            result = await service.remove_team_member(session, team_id, user['db_id'], member_id)
+        await restart_redis_cache()
+        return result
+
+    @router.post('/teams/{team_id}/dissolve')
+    async def dissolve_team_route(team_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+        await session.commit()
+        async with session.begin():
+            result = await service.dissolve_team(session, team_id, user['db_id'])
         await restart_redis_cache()
         return result
 

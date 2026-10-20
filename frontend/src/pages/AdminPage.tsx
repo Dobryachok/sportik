@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import {
+  deleteApprovedSport,
   deleteSportBackground,
   fetchAdminEvents,
   fetchAdminSportCatalog,
@@ -64,6 +65,33 @@ export function AdminPage() {
     finally { setBusyId('') }
   }
 
+  const removeSportFromCatalog = async (sport: AdminSportCatalogItem) => {
+    if (!window.confirm(`Удалить «${sport.name}» из каталога? Вид спорта исчезнет из списка при создании мероприятий.`)) return
+    setSportBgBusy(sport.id)
+    try {
+      await deleteApprovedSport(sport.id)
+      setSportCatalog((items) => items.filter((item) => item.id !== sport.id))
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось удалить вид спорта.')
+    } finally {
+      setSportBgBusy('')
+    }
+  }
+
+  const clearSportBackground = async (sport: AdminSportCatalogItem) => {
+    setSportBgBusy(sport.id)
+    try {
+      await deleteSportBackground(sport.id)
+      setSportCatalog((items) => items.map((item) => (item.id === sport.id ? { ...item, backgroundImage: null } : item)))
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось удалить фон.')
+    } finally {
+      setSportBgBusy('')
+    }
+  }
+
   const hideEvent = async (event: AdminEvent) => {
     if (!window.confirm(`Снять с публикации «${event.title}»? Запись и показ в каталоге будут остановлены.`)) return
     setBusyId(event.id)
@@ -86,8 +114,80 @@ export function AdminPage() {
       <div className="mt-4 space-y-3">{events.map((event) => <article key={event.id} className="rounded-xl border border-white/10 bg-bg/50 p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><Link to={`/events/${event.id}`} className="font-semibold text-white hover:text-accent">{event.title}</Link><p className="mt-1 text-xs text-muted">{event.city} · {new Date(event.startsAt).toLocaleString('ru-RU')}</p><p className="mt-1 text-xs text-muted">Организатор: {event.organizationName || event.organizerName}</p></div><button type="button" disabled={busyId === event.id} onClick={() => void hideEvent(event)} className="rounded-lg border border-warning/50 px-3 py-2 text-sm font-semibold text-warning disabled:opacity-50">Снять с публикации</button></div><input value={comments[event.id] || ''} onChange={(input) => setComments((items) => ({ ...items, [event.id]: input.target.value }))} placeholder="Причина для организатора (необязательно)" maxLength={4000} className="mt-3 w-full rounded-lg bg-card px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-accent" /></article>)}{events.length === 0 && <p className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-sm text-muted">Опубликованных событий нет.</p>}</div>
     </section>
     <section className="mt-5 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
-      <div className="flex items-baseline justify-between gap-3"><div className="flex gap-3"><Dumbbell className="mt-0.5 text-accent" size={21} /><div><h2 className="text-lg font-bold">Фоны видов спорта</h2><p className="mt-1 text-sm text-muted">Картинки для квадратных карточек на странице «События».</p></div></div><span className="rounded-full bg-accent/10 px-2.5 py-1 text-sm font-bold text-accent">{sportCatalog.length}</span></div>
-      <div className="mt-4 space-y-3">{sportCatalog.map((sport) => <article key={sport.id} className="flex flex-wrap items-center gap-4 rounded-xl border border-white/10 bg-bg/50 p-3"><div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-card">{sport.backgroundImage ? <img src={sport.backgroundImage} alt="" className="h-full w-full object-cover" /> : <span className="flex h-full w-full items-center justify-center text-xs text-muted">Нет</span>}</div><div className="min-w-0 flex-1"><p className="font-semibold text-white">{sport.name}</p><p className="text-xs text-muted">{sport.slug}</p></div><div className="flex flex-wrap gap-2"><label className="cursor-pointer rounded-lg border border-white/15 px-3 py-2 text-sm font-semibold text-white"><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={sportBgBusy === sport.id} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; setSportBgBusy(sport.id); void uploadSportBackground(sport.id, file).then((result) => { setSportCatalog((items) => items.map((item) => item.id === sport.id ? { ...item, backgroundImage: result.backgroundImage } : item)); void refresh() }).catch((cause) => setError(cause instanceof Error ? cause.message : 'Не удалось загрузить фон.')).finally(() => setSportBgBusy('')) }} />{sportBgBusy === sport.id ? 'Загрузка…' : 'Загрузить'}</label>{sport.backgroundImage && <button type="button" disabled={sportBgBusy === sport.id} onClick={() => { setSportBgBusy(sport.id); void deleteSportBackground(sport.id).then(() => { setSportCatalog((items) => items.map((item) => item.id === sport.id ? { ...item, backgroundImage: null } : item)); void refresh() }).catch((cause) => setError(cause instanceof Error ? cause.message : 'Не удалось удалить фон.')).finally(() => setSportBgBusy('')) }} className="rounded-lg border border-warning/50 px-3 py-2 text-sm font-semibold text-warning disabled:opacity-50">Удалить</button>}</div></article>)}{sportCatalog.length === 0 && <p className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-sm text-muted">Одобренных видов спорта пока нет.</p>}</div>
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="flex gap-3">
+          <Dumbbell className="mt-0.5 text-accent" size={21} />
+          <div>
+            <h2 className="text-lg font-bold">Каталог видов спорта</h2>
+            <p className="mt-1 text-sm text-muted">Фоны карточек и удаление вида из каталога (если нет опубликованных мероприятий).</p>
+          </div>
+        </div>
+        <span className="rounded-full bg-accent/10 px-2.5 py-1 text-sm font-bold text-accent">{sportCatalog.length}</span>
+      </div>
+      <div className="mt-4 space-y-3">
+        {sportCatalog.map((sport) => (
+          <article key={sport.id} className="flex flex-wrap items-center gap-4 rounded-xl border border-white/10 bg-bg/50 p-3">
+            <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-card">
+              {sport.backgroundImage ? (
+                <img src={sport.backgroundImage} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center text-xs text-muted">Нет фона</span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-white">{sport.name}</p>
+              <p className="text-xs text-muted">{sport.slug}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <label className="cursor-pointer rounded-lg border border-white/15 px-3 py-2 text-sm font-semibold text-white">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  disabled={sportBgBusy === sport.id}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    event.target.value = ''
+                    if (!file) return
+                    setSportBgBusy(sport.id)
+                    void uploadSportBackground(sport.id, file)
+                      .then((result) => {
+                        setSportCatalog((items) =>
+                          items.map((item) => (item.id === sport.id ? { ...item, backgroundImage: result.backgroundImage } : item)),
+                        )
+                        void refresh()
+                      })
+                      .catch((cause) => setError(cause instanceof Error ? cause.message : 'Не удалось загрузить фон.'))
+                      .finally(() => setSportBgBusy(''))
+                  }}
+                />
+                {sportBgBusy === sport.id ? 'Загрузка…' : 'Фон'}
+              </label>
+              {sport.backgroundImage && (
+                <button
+                  type="button"
+                  disabled={sportBgBusy === sport.id}
+                  onClick={() => void clearSportBackground(sport)}
+                  className="rounded-lg border border-white/20 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  Убрать фон
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={sportBgBusy === sport.id}
+                onClick={() => void removeSportFromCatalog(sport)}
+                className="rounded-lg border border-warning/50 px-3 py-2 text-sm font-semibold text-warning disabled:opacity-50"
+              >
+                Удалить вид спорта
+              </button>
+            </div>
+          </article>
+        ))}
+        {sportCatalog.length === 0 && (
+          <p className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-sm text-muted">Одобренных видов спорта пока нет.</p>
+        )}
+      </div>
     </section>
     <section className="mt-5 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
       <div className="flex items-baseline justify-between gap-3"><div className="flex gap-3"><Dumbbell className="mt-0.5 text-accent" size={21} /><div><h2 className="text-lg font-bold">Виды спорта на модерации</h2><p className="mt-1 text-sm text-muted">Одобренные виды станут доступны при создании мероприятий.</p></div></div><span className="rounded-full bg-accent/10 px-2.5 py-1 text-sm font-bold text-accent">{sports.length}</span></div>

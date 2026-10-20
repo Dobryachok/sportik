@@ -1394,7 +1394,7 @@ async def upload_sport_background(
     return {'backgroundImage': f'/media/{media_id}'}
 
 
-@app.delete('/api/v1/admin/sports/{sport_id}/background', status_code=status.HTTP_204_NO_CONTENT)
+@app.delete('/api/v1/admin/sports/{sport_id}/background')
 async def delete_sport_background(sport_id: str, user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
     old_filename = None
     await session.commit()
@@ -1423,6 +1423,54 @@ async def delete_sport_background(sport_id: str, user=Depends(require_admin), se
         except OSError:
             pass
     await restart_redis_cache()
+    return {'ok': True}
+
+
+@app.delete('/api/v1/admin/sports/{sport_id}')
+async def remove_approved_sport(sport_id: str, user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    await session.commit()
+    async with session.begin():
+        sport = (await session.execute(
+            text("SELECT id, name FROM sports WHERE public_id = :id AND status = 'APPROVED' FOR UPDATE"),
+            {'id': sport_id},
+        )).mappings().first()
+        if not sport:
+            raise HTTPException(404, 'Approved sport not found')
+        published = await session.scalar(
+            text(
+                '''SELECT count(*) FROM events e
+                   WHERE e.sport_id = :sport AND e.status = 'PUBLISHED' '''
+            ),
+            {'sport': sport['id']},
+        )
+        if published and int(published) > 0:
+            raise HTTPException(
+                409,
+                'Нельзя удалить вид спорта: есть опубликованные мероприятия. Сначала снимите их с публикации.',
+            )
+        if await table_exists(session, 'sport_backgrounds'):
+            old_filename = await session.scalar(
+                text('SELECT filename FROM sport_backgrounds WHERE sport_id = :id'),
+                {'id': sport['id']},
+            )
+            await session.execute(text('DELETE FROM sport_backgrounds WHERE sport_id = :id'), {'id': sport['id']})
+            if old_filename:
+                try:
+                    (settings.upload_dir / old_filename).unlink(missing_ok=True)
+                except OSError:
+                    pass
+        sport_columns = await table_columns(session, 'sports')
+        if 'background_image' in sport_columns:
+            await session.execute(
+                text('UPDATE sports SET background_image = NULL WHERE id = :id'),
+                {'id': sport['id']},
+            )
+        await session.execute(
+            text("UPDATE sports SET status = 'REJECTED', reviewed_by = :admin, reviewed_at = now() WHERE id = :id"),
+            {'admin': user['db_id'], 'id': sport['id']},
+        )
+    await restart_redis_cache()
+    return {'ok': True}
 
 
 @app.post('/api/v1/organizations/applications', status_code=status.HTTP_201_CREATED)

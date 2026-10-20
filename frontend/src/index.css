@@ -89,7 +89,12 @@ body {
 }
 
 :root:not([data-theme='dark']) .event-hero-surface .text-white,
-:root:not([data-theme='dark']) .event-hero-surface [class*='text-white/'] {
+:root:not([data-theme='dark']) .event-hero-surface [class*='text-white/'],
+:root:not([data-theme='dark']) .sport-tile-photo .sport-tile-title,
+:root:not([data-theme='dark']) .sport-tile-photo .sport-tile-meta,
+:root:not([data-theme='dark']) .event-card-photo .event-card-title,
+:root:not([data-theme='dark']) .event-card-photo .event-card-meta,
+:root:not([data-theme='dark']) .event-card-photo [class*='text-white'] {
   color: #fff !important;
 }
 
@@ -106,6 +111,11 @@ body {
 
 :root:not([data-theme='dark']) .sportik-menu-open-btn:hover {
   filter: brightness(1.05);
+}
+
+:root:not([data-theme='dark']) .app-nav-item:hover:not(.app-nav-item-active) {
+  background: rgba(8, 123, 184, 0.12) !important;
+  color: var(--app-accent) !important;
 }
 
 button,

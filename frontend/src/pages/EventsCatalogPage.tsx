@@ -26,6 +26,19 @@ function startOfWeek(date: Date): Date {
   return start
 }
 
+function matchesCatalogFilters(
+  event: Event,
+  sportId: string,
+  eventType: Event['eventType'] | undefined,
+  district: string,
+): boolean {
+  if (sportId && event.sportId !== sportId) return false
+  if (eventType && event.eventType !== eventType) return false
+  if (district === 'left') return event.district?.toLowerCase().includes('левый') ?? false
+  if (district === 'right') return event.district?.toLowerCase().includes('правый') ?? false
+  return true
+}
+
 export function EventsCatalogPage() {
   const { state, refresh } = useAppData()
   const [searchParams] = useSearchParams()
@@ -45,9 +58,11 @@ export function EventsCatalogPage() {
   const days = useMemo(() => buildWeek(weekStart), [weekStart])
   const markedDays = useMemo(() => {
     const keys = new Set<string>()
-    getPublishedEvents(state).forEach((event) => keys.add(eventDateKey(event.startsAt)))
+    getPublishedEvents(state)
+      .filter((event) => matchesCatalogFilters(event, requestedSportId, type, district))
+      .forEach((event) => keys.add(eventDateKey(event.startsAt)))
     return keys
-  }, [state])
+  }, [state, requestedSportId, type, district])
   const moveWeek = (delta: number) => {
     const next = new Date(weekStart)
     next.setDate(next.getDate() + delta * 7)
@@ -63,13 +78,7 @@ export function EventsCatalogPage() {
   const events = useMemo(
     () =>
       getPublishedEvents(state)
-        .filter((event) => !requestedSportId || event.sportId === requestedSportId)
-        .filter((event) => !type || event.eventType === type)
-        .filter((event) => {
-          if (district === 'all') return true
-          if (district === 'left') return event.district?.toLowerCase().includes('левый') ?? false
-          return event.district?.toLowerCase().includes('правый') ?? false
-        })
+        .filter((event) => matchesCatalogFilters(event, requestedSportId, type, district))
         .filter((event) => sameDay(new Date(event.startsAt), selected))
         .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()),
     [state, requestedSportId, type, district, selected],
@@ -124,7 +133,7 @@ export function EventsCatalogPage() {
           <h2 className="text-xl font-bold tracking-[-0.025em]">На выбранную дату</h2>
           <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-xs font-semibold text-muted">{events.length}</span>
         </div>
-        <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-1 gap-4 min-[720px]:grid-cols-2">
           {events.length === 0 && <div className="rounded-[1.35rem] border border-dashed border-white/15 px-5 py-10 text-center text-sm leading-relaxed text-muted">На выбранную дату мероприятий нет. Попробуйте другой день или район.</div>}
           {events.map((event) => {
             const participants = getEventParticipants(state, event.id)
