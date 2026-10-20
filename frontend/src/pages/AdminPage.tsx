@@ -150,7 +150,67 @@ export function AdminPage() {
     {error && <p role="alert" className="mb-4 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 text-sm text-rose-300">{error}</p>}
     <section className="rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
       <div className="flex items-baseline justify-between gap-3"><div className="flex gap-3"><Building2 className="mt-0.5 text-accent" size={21} /><div><h2 className="text-lg font-bold">Заявки организаций</h2><p className="mt-1 text-sm text-muted">После одобрения они смогут публиковать мероприятия от своего имени.</p></div></div><span className="rounded-full bg-accent/10 px-2.5 py-1 text-sm font-bold text-accent">{organizations.length}</span></div>
-      <div className="mt-4 space-y-3">{organizations.map((organization) => <article key={organization.id} className="rounded-xl border border-white/10 bg-bg/50 p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold text-white">{organization.name}</p><p className="mt-1 text-xs text-muted">{organization.city} · Заявитель: {organization.requestedByName}</p></div><span className="text-xs text-muted">{new Date(organization.createdAt).toLocaleDateString('ru-RU')}</span></div>{organization.description && <p className="mt-3 text-sm leading-5 text-muted">{organization.description}</p>}{organization.comment && <p className="mt-3 rounded-lg bg-card px-3 py-2 text-sm text-muted">Комментарий: {organization.comment}</p>}<textarea value={comments[organization.id] || ''} onChange={(event) => setComments((items) => ({ ...items, [organization.id]: event.target.value }))} placeholder="Комментарий для заявителя (особенно при отказе)" maxLength={4000} rows={2} className="mt-3 w-full rounded-lg bg-card px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-accent" /><div className="mt-3 flex gap-2"><button type="button" disabled={busyId === organization.id} onClick={() => void decideOrganization(organization, 'rejected')} className="rounded-lg border border-warning/50 px-3 py-2 text-sm font-semibold text-warning disabled:opacity-50">Отклонить</button><button type="button" disabled={busyId === organization.id} onClick={() => void decideOrganization(organization, 'approved')} className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Одобрить</button></div></article>)}{organizations.length === 0 && <p className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-sm text-muted">Новых заявок организаций нет.</p>}</div>
+      <div className="mt-4 space-y-3">
+        {organizations.map((organization) => (
+          <article key={organization.id} className="rounded-xl border border-white/10 bg-bg/50 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold text-white">{organization.name}</p>
+                <p className="mt-1 text-xs text-muted">
+                  {organization.city}
+                  {organization.address ? ` · ${organization.address}` : ''}
+                  {' · '}Заявитель: {organization.requestedByName}
+                </p>
+              </div>
+              <span className="text-xs text-muted">{new Date(organization.createdAt).toLocaleDateString('ru-RU')}</span>
+            </div>
+            {organization.description && <p className="mt-3 text-sm leading-5 text-muted">{organization.description}</p>}
+            <ul className="mt-3 space-y-1 text-sm text-muted">
+              {organization.email && <li>Почта: {organization.email}</li>}
+              {organization.phone && <li>Телефон: {organization.phone}</li>}
+              {organization.website && (
+                <li>
+                  Сайт:{' '}
+                  <a href={organization.website} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                    {organization.website}
+                  </a>
+                </li>
+              )}
+            </ul>
+            {organization.socialLinks?.length ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {organization.socialLinks.map((link) => (
+                  <a
+                    key={`${link.platform}:${link.url}`}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-white/10 bg-card px-2.5 py-1 text-xs font-semibold text-white hover:border-accent"
+                  >
+                    {link.label || link.platform}
+                  </a>
+                ))}
+              </div>
+            ) : null}
+            {organization.comment && (
+              <p className="mt-3 rounded-lg bg-card px-3 py-2 text-sm text-muted">Комментарий заявителя: {organization.comment}</p>
+            )}
+            <textarea
+              value={comments[organization.id] || ''}
+              onChange={(event) => setComments((items) => ({ ...items, [organization.id]: event.target.value }))}
+              placeholder="Комментарий для заявителя (особенно при отказе)"
+              maxLength={4000}
+              rows={2}
+              className="mt-3 w-full rounded-lg bg-card px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-accent"
+            />
+            <div className="mt-3 flex gap-2">
+              <button type="button" disabled={busyId === organization.id} onClick={() => void decideOrganization(organization, 'rejected')} className="rounded-lg border border-warning/50 px-3 py-2 text-sm font-semibold text-warning disabled:opacity-50">Отклонить</button>
+              <button type="button" disabled={busyId === organization.id} onClick={() => void decideOrganization(organization, 'approved')} className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Одобрить</button>
+            </div>
+          </article>
+        ))}
+        {organizations.length === 0 && <p className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-sm text-muted">Новых заявок организаций нет.</p>}
+      </div>
     </section>
     <section className="mt-5 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
       <div className="flex items-baseline justify-between gap-3"><div className="flex gap-3"><CalendarOff className="mt-0.5 text-accent" size={21} /><div><h2 className="text-lg font-bold">Опубликованные события</h2><p className="mt-1 text-sm text-muted">Снятое с публикации событие исчезает из выдачи и закрывается для регистрации.</p></div></div><span className="rounded-full bg-accent/10 px-2.5 py-1 text-sm font-bold text-accent">{events.length}</span></div>

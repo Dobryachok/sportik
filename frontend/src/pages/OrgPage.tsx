@@ -6,7 +6,9 @@ import { CityChooser } from '../components/CityChooser'
 import { LocationPicker } from '../components/LocationPicker'
 import { PageHeader } from '../components/PageHeader'
 import { PrimaryButton } from '../components/PrimaryButton'
+import { SocialLinksFields } from '../components/SocialLinksFields'
 import { fetchMyOrganizations, requestOrganization, type OwnedOrganization } from '../data/api'
+import type { SocialLink } from '../data/types'
 
 export function OrgPage() {
   const { city: userCity } = useAppData()
@@ -24,6 +26,7 @@ export function OrgPage() {
   const [phone, setPhone] = useState('')
   const [website, setWebsite] = useState('')
   const [comment, setComment] = useState('')
+  const [socialLinks, setSocialLinks] = useState<SocialLink[]>([])
 
   const loadOrganizations = async () => {
     setLoading(true)
@@ -41,17 +44,25 @@ export function OrgPage() {
 
   const submit = async (form: FormEvent) => {
     form.preventDefault()
-    if (busy || !name.trim() || !city.trim() || latitude === undefined || longitude === undefined) {
-      setError('Укажите название, город и выберите точку на карте.')
+    if (busy || !name.trim() || !city.trim()) {
+      setError('Укажите название и город организации.')
       return
     }
     setBusy(true)
     setError('')
     try {
       await requestOrganization({
-        name: name.trim(), description: description.trim(), city, latitude, longitude,
-        email: email.trim() || undefined, phone: phone.trim() || undefined,
-        website: website.trim() || undefined, comment: comment.trim() || undefined,
+        name: name.trim(),
+        description: description.trim(),
+        city,
+        address: address.trim() || undefined,
+        latitude,
+        longitude,
+        email: email.trim() || undefined,
+        phone: phone.trim() || undefined,
+        website: website.trim() || undefined,
+        socialLinks: socialLinks.filter((item) => item.platform.trim() && item.url.trim()),
+        comment: comment.trim() || undefined,
       })
       setName('')
       setDescription('')
@@ -62,6 +73,7 @@ export function OrgPage() {
       setPhone('')
       setWebsite('')
       setComment('')
+      setSocialLinks([])
       await loadOrganizations()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось отправить заявку.')
@@ -99,9 +111,11 @@ export function OrgPage() {
             <label className="block text-sm text-muted">Название организации *<input required maxLength={255} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full rounded-xl bg-bg px-3 py-2.5 text-white outline-none focus:ring-1 focus:ring-accent" /></label>
             <label className="block text-sm text-muted">Описание<textarea maxLength={10000} rows={3} value={description} onChange={(event) => setDescription(event.target.value)} className="mt-1 w-full rounded-xl bg-bg px-3 py-2.5 text-white outline-none focus:ring-1 focus:ring-accent" /></label>
             <div className="flex items-center justify-between rounded-xl bg-bg px-3 py-2.5 text-sm text-muted"><span>Город: <span className="text-white">{city || 'не выбран'}</span></span><CityChooser value={city} onChange={(nextCity) => { setCity(nextCity); setLatitude(undefined); setLongitude(undefined) }} label="Город организации" /></div>
-            <LocationPicker required address={address} city={city} district="" onChange={(location) => { setAddress(location.address); setCity(location.city); setLatitude(location.latitude); setLongitude(location.longitude) }} />
+            <LocationPicker required={false} lockCity address={address} city={city} district="" onChange={(location) => { setAddress(location.address); setCity(location.city); setLatitude(location.latitude); setLongitude(location.longitude) }} />
+            <p className="text-xs text-muted">Адрес на карте необязателен.</p>
             <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm text-muted">Почта<input type="email" maxLength={255} value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 w-full rounded-xl bg-bg px-3 py-2.5 text-white" /></label><label className="block text-sm text-muted">Телефон<input maxLength={50} value={phone} onChange={(event) => setPhone(event.target.value)} className="mt-1 w-full rounded-xl bg-bg px-3 py-2.5 text-white" /></label></div>
             <label className="block text-sm text-muted">Сайт<input type="url" placeholder="https://example.org" maxLength={500} value={website} onChange={(event) => setWebsite(event.target.value)} className="mt-1 w-full rounded-xl bg-bg px-3 py-2.5 text-white" /></label>
+            <SocialLinksFields value={socialLinks} onChange={setSocialLinks} />
             <label className="block text-sm text-muted">Комментарий для администратора<textarea maxLength={4000} rows={3} value={comment} onChange={(event) => setComment(event.target.value)} className="mt-1 w-full rounded-xl bg-bg px-3 py-2.5 text-white" /></label>
             {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
             <PrimaryButton type="submit" fullWidth disabled={busy}>{busy ? 'Отправляем…' : 'Отправить заявку'}</PrimaryButton>
