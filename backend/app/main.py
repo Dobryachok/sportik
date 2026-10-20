@@ -199,12 +199,12 @@ async def table_exists(session: AsyncSession, table: str) -> bool:
 
 def user_profile_fields_sql(columns: frozenset[str], *, include_start_completed: bool = True) -> str:
     parts = [
-        'p.birth_date AS "birthDate"',
-        'p.marital_status AS "maritalStatus"',
+        'p.birth_date AS "birthDate"' if 'birth_date' in columns else 'NULL::date AS "birthDate"',
+        'p.marital_status AS "maritalStatus"' if 'marital_status' in columns else 'NULL::varchar(50) AS "maritalStatus"',
         'p.gender' if 'gender' in columns else 'NULL::varchar(20) AS gender',
-        'p.has_car AS "hasCar"',
-        'p.work_schedule AS "workSchedule"',
-        'p.social_links AS "socialLinks"',
+        'p.has_car AS "hasCar"' if 'has_car' in columns else 'NULL::boolean AS "hasCar"',
+        'p.work_schedule AS "workSchedule"' if 'work_schedule' in columns else 'NULL::varchar(255) AS "workSchedule"',
+        'p.social_links AS "socialLinks"' if 'social_links' in columns else "'[]'::jsonb AS \"socialLinks\"",
         'p.interests' if 'interests' in columns else "'[]'::jsonb AS interests",
     ]
     if include_start_completed:
@@ -217,12 +217,44 @@ def user_profile_fields_sql(columns: frozenset[str], *, include_start_completed:
 
 def public_user_profile_fields_sql(columns: frozenset[str]) -> str:
     return ',\n        '.join([
-        'p.marital_status AS "maritalStatus"',
+        'p.marital_status AS "maritalStatus"' if 'marital_status' in columns else 'NULL::varchar(50) AS "maritalStatus"',
         'p.gender' if 'gender' in columns else 'NULL::varchar(20) AS gender',
-        'p.has_car AS "hasCar"',
-        'p.work_schedule AS "workSchedule"',
+        'p.has_car AS "hasCar"' if 'has_car' in columns else 'NULL::boolean AS "hasCar"',
+        'p.work_schedule AS "workSchedule"' if 'work_schedule' in columns else 'NULL::varchar(255) AS "workSchedule"',
         'p.interests' if 'interests' in columns else "'[]'::jsonb AS interests",
     ])
+
+
+USER_ROLE_SQL = """CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
+             WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization'
+             ELSE 'user' END AS role"""
+
+
+async def user_stats_sql(session: AsyncSession) -> str:
+    event_count = '(SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount"'
+    if await table_exists(session, 'user_follows'):
+        return f'''{event_count},
+        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
+        (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount"'''
+    return f'''{event_count},
+        0::integer AS "subscriptionsCount",
+        0::integer AS "followersCount"'''
+
+
+async def fetch_authenticated_user_row(session: AsyncSession, digest: str) -> dict | None:
+    profile_columns = await table_columns(session, 'user_profiles')
+    profile_fields = user_profile_fields_sql(profile_columns)
+    stats_sql = await user_stats_sql(session)
+    user = (await session.execute(text(f"""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
+        {profile_fields},
+        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
+        {stats_sql},
+        {USER_ROLE_SQL}
+        FROM auth_sessions s JOIN users u ON u.id=s.user_id
+        LEFT JOIN user_profiles p ON p.user_id=u.id
+        WHERE s.token_hash=:hash AND s.revoked_at IS NULL AND s.expires_at > now() AND u.status='ACTIVE'"""),
+                                  {'hash': digest})).mappings().first()
+    return dict(user) if user else None
 
 
 async def restart_redis_cache():
@@ -369,24 +401,10 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, 'Authentication required')
     digest = hashlib.sha256(token.encode()).hexdigest()
-    profile_columns = await table_columns(session, 'user_profiles')
-    profile_fields = user_profile_fields_sql(profile_columns)
-    user = (await session.execute(text(f"""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
-        {profile_fields},
-        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
-        (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
-        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
-        (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount",
-        CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
-             WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization'
-             ELSE 'user' END AS role
-        FROM auth_sessions s JOIN users u ON u.id=s.user_id
-        LEFT JOIN user_profiles p ON p.user_id=u.id
-        WHERE s.token_hash=:hash AND s.revoked_at IS NULL AND s.expires_at > now() AND u.status='ACTIVE'"""),
-                                      {'hash': digest})).mappings().first()
+    user = await fetch_authenticated_user_row(session, digest)
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, 'Authentication required')
-    return dict(user)
+    return user
 
 
 async def require_user(request: Request, user=Depends(current_user)):
@@ -497,15 +515,12 @@ async def login(payload: Credentials, request: Request, response: Response, sess
     await throttle_auth(payload.email, 'login', 20)
     profile_columns = await table_columns(session, 'user_profiles')
     profile_fields = user_profile_fields_sql(profile_columns)
+    stats_sql = await user_stats_sql(session)
     user = (await session.execute(text(f'''SELECT u.id,u.public_id,u.password_hash,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
         {profile_fields},
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
-        (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
-        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
-        (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount",
-        CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
-             WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization'
-             ELSE 'user' END AS role
+        {stats_sql},
+        {USER_ROLE_SQL}
         FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
         WHERE lower(u.email)=:email AND u.status='ACTIVE' '''),
                                   {'email': payload.email})).mappings().first()
@@ -743,16 +758,17 @@ async def media(media_id: str, session: AsyncSession = Depends(db_session)):
 async def find_public_user(session: AsyncSession, public_id: str, viewer_id: int | None = None):
     profile_columns = await table_columns(session, 'user_profiles')
     profile_fields = public_user_profile_fields_sql(profile_columns)
+    stats_sql = await user_stats_sql(session)
+    social_links_sql = (
+        'p.social_links AS "socialLinks"'
+        if 'social_links' in profile_columns else "'[]'::jsonb AS \"socialLinks\""
+    )
     user = (await session.execute(text(f'''SELECT u.id AS db_id,u.public_id AS id,u.name,COALESCE(u.city,'') AS city,
-        u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,p.social_links AS "socialLinks",
+        u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,{social_links_sql},
         {profile_fields},
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
-        (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
-        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
-        (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount",
-        CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
-          WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization'
-          ELSE 'user' END AS role
+        {stats_sql},
+        {USER_ROLE_SQL}
         FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
         WHERE u.public_id=:id AND u.status='ACTIVE' '''), {'id': public_id})).mappings().first()
     if not user:
@@ -940,14 +956,12 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
     params = {'ids': event_ids, 'user_id': user['db_id'] if user else -1}
     profile_columns = await table_columns(session, 'user_profiles')
     profile_fields = user_profile_fields_sql(profile_columns, include_start_completed=False)
+    stats_sql = await user_stats_sql(session)
     users = await rows(session, f'''SELECT DISTINCT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,
        {profile_fields},
        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
-       (SELECT count(*)::integer FROM events owner_events WHERE owner_events.organizer_id=u.id) AS "eventCount",
-       (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
-       (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount",
-       CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
-         WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization' ELSE 'user' END AS role
+       {stats_sql},
+       {USER_ROLE_SQL}
        FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id IN (
         SELECT organizer_id FROM events WHERE public_id = ANY(:ids)
         UNION SELECT c.user_id FROM event_comments c JOIN events e ON e.id=c.event_id WHERE e.public_id=ANY(:ids) AND c.status='VISIBLE'
@@ -963,7 +977,9 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
     sports = await rows(session, f'''SELECT s.public_id AS id,s.name,s.slug,count(e.id)::integer AS "eventCount" FROM sports s
        JOIN events e ON e.sport_id=s.id AND e.status='PUBLISHED' AND e.public_id=ANY(:ids)
        WHERE {approved_sports_filter} GROUP BY s.id ORDER BY s.id''', params)
-    comments = await rows(session, '''SELECT 'c-' || c.id AS id,e.public_id AS "eventId",u.public_id AS "authorId",c.text,c.kind,c.created_at AS "createdAt"
+    comment_columns = await table_columns(session, 'event_comments')
+    comment_kind_sql = 'c.kind' if 'kind' in comment_columns else "'MESSAGE' AS kind"
+    comments = await rows(session, f'''SELECT 'c-' || c.id AS id,e.public_id AS "eventId",u.public_id AS "authorId",c.text,{comment_kind_sql},c.created_at AS "createdAt"
        FROM event_comments c JOIN events e ON e.id=c.event_id JOIN users u ON u.id=c.user_id
        WHERE e.public_id=ANY(:ids) AND c.status='VISIBLE' ORDER BY c.id''', params)
     for comment in comments: comment['createdAt'] = timestamp(comment['createdAt'])
@@ -988,13 +1004,21 @@ async def health(session: AsyncSession = Depends(db_session)):
     return {'status': 'ok'}
 
 
+async def optional_state_user(request: Request, session: AsyncSession) -> dict | None:
+    token = request.cookies.get(settings.session_cookie_name)
+    if not token:
+        return None
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    try:
+        return await fetch_authenticated_user_row(session, digest)
+    except Exception:
+        logger.warning('Ignoring invalid session cookie for /api/v1/state', exc_info=True)
+        return None
+
+
 @app.get('/api/v1/state')
 async def state(request: Request, city: str | None = None, session: AsyncSession = Depends(db_session)):
-    user = None
-    try:
-        user = await current_user(request, session)
-    except HTTPException as exc:
-        if exc.status_code != 401: raise
+    user = await optional_state_user(request, session)
     try:
         return await build_state(session, city, user)
     except Exception:
