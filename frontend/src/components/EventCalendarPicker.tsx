@@ -1,6 +1,5 @@
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { ruWeekdayShort } from '../lib/format'
 
 function dateKey(date: Date): string {
   const y = date.getFullYear()
