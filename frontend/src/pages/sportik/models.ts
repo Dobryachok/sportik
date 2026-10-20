@@ -1,17 +1,18 @@
 import type { SportikStage } from './progress'
+import { defaultBodyModelUrl, profileBodyGender } from './sportBodies'
+import type { User } from '../../data/types'
 
-/** GLB filenames live in `frontend/public/models/`. */
 export function sportikModelPath(fileName: string) {
   return `/models/${encodeURIComponent(fileName)}`
 }
 
-/** Body progression: novice → athlete → titan (from asset pack). */
+/** @deprecated Используйте defaultBodyModelUrl / sportBodies. */
 export const STAGE_MODEL_FILES: Record<SportikStage, string> = {
-  default: 'by default2.glb',
-  medium: 'slender basketball player.glb',
-  hight: 'muscular basketball player.glb',
+  default: '0by default2.glb',
+  medium: '0by default2.glb',
+  hight: '0by default2.glb',
 }
 
-export function stageModelUrl(stage: SportikStage) {
-  return sportikModelPath(STAGE_MODEL_FILES[stage])
+export function stageModelUrl(_stage: SportikStage, user?: User | null) {
+  return defaultBodyModelUrl(profileBodyGender(user))
 }

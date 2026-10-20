@@ -1,15 +1,23 @@
+import type { SportBodyKey } from './sportBodies'
+
 const ownedKey = (userId: string) => `sportik-owned:${userId}`
-const equippedKey = (userId: string) => `sportik-equipped:${userId}`
+const equipKey = (userId: string) => `sportik-equip:${userId}`
 const spentKey = (userId: string) => `sportik-spent-points:${userId}`
+
+export type StoredEquip = {
+  sportKey: SportBodyKey | null
+  variantIndex: number | null
+  warehouseId: string | null
+}
 
 export function readOwnedIds(userId: string): string[] {
   try {
     const raw = localStorage.getItem(ownedKey(userId))
-    if (!raw) return ['slender-tee']
+    if (!raw) return []
     const parsed = JSON.parse(raw) as string[]
-    return Array.isArray(parsed) ? parsed : ['slender-tee']
+    return Array.isArray(parsed) ? parsed : []
   } catch {
-    return ['slender-tee']
+    return []
   }
 }
 
@@ -21,24 +29,29 @@ export function writeOwnedIds(userId: string, ids: string[]) {
   }
 }
 
-export function readEquippedId(userId: string): string | null {
+export function readEquip(userId: string): StoredEquip {
   try {
-    return localStorage.getItem(equippedKey(userId))
+    const raw = localStorage.getItem(equipKey(userId))
+    if (!raw) return { sportKey: null, variantIndex: null, warehouseId: null }
+    const parsed = JSON.parse(raw) as StoredEquip
+    return {
+      sportKey: parsed.sportKey ?? null,
+      variantIndex: parsed.variantIndex ?? null,
+      warehouseId: parsed.warehouseId ?? null,
+    }
   } catch {
-    return null
+    return { sportKey: null, variantIndex: null, warehouseId: null }
   }
 }
 
-export function writeEquippedId(userId: string, id: string | null) {
+export function writeEquip(userId: string, equip: StoredEquip) {
   try {
-    if (id) localStorage.setItem(equippedKey(userId), id)
-    else localStorage.removeItem(equippedKey(userId))
+    localStorage.setItem(equipKey(userId), JSON.stringify(equip))
   } catch {
     /* optional */
   }
 }
 
-/** Activity points already spent in the shop (client-side ledger). */
 export function readSpentPoints(userId: string): number {
   try {
     const raw = localStorage.getItem(spentKey(userId))

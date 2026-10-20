@@ -8,29 +8,36 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { useTheme } from '../app/ThemeContext'
 import {
-  allModelUrls,
-  findOwnedItem,
   LOOT_CASES,
-  resolveDisplayModelUrl,
-  SHOP_ITEMS,
-  stageMeetsRequirement,
-  type ShopCategory,
+  SHOP_TABS,
+  WAREHOUSE_SHOP,
+  findOwnedItem,
   rollCaseLoot,
+  type ShopCategory,
 } from './sportik/catalog'
 import {
   readClosedChallenges,
   sportikChallenges,
   type SportikChallenge,
 } from './sportik/challenges'
+import { allBodyAndWarehouseUrls, buildUnlockedKeySet, resolveDisplayModelUrl } from './sportik/displayModel'
 import {
   availableBalance,
-  readEquippedId,
+  readEquip,
   readOwnedIds,
   readSpentPoints,
-  writeEquippedId,
+  writeEquip,
   writeOwnedIds,
   writeSpentPoints,
+  type StoredEquip,
 } from './sportik/loadout'
+import {
+  profileBodyGender,
+  stageVariantIndex,
+  unlockedSportRows,
+  type SportBodyKey,
+  type SportBodyRow,
+} from './sportik/sportBodies'
 import {
   countVisits,
   nextProgress,
@@ -80,13 +87,6 @@ const menuCards = [
 
 type PanelView = 'home' | 'challenges' | 'challenge-detail' | 'shop' | 'customize'
 
-const shopTabs: { id: ShopCategory | 'case'; label: string }[] = [
-  { id: 'outfit', label: 'Стрит' },
-  { id: 'sport', label: 'Спорт' },
-  { id: 'champion', label: 'Чемпион' },
-  { id: 'case', label: 'Кейсы' },
-]
-
 export function SportikPage() {
   const { currentUser, state } = useAppData()
   const { theme } = useTheme()
@@ -99,7 +99,7 @@ export function SportikPage() {
   const [selectedChallengeId, setSelectedChallengeId] = useState<string | null>(null)
   const [closedIds, setClosedIds] = useState<string[]>([])
   const [ownedIds, setOwnedIds] = useState<string[]>([])
-  const [equippedId, setEquippedId] = useState<string | null>(null)
+  const [equip, setEquip] = useState<StoredEquip>({ sportKey: null, variantIndex: null, warehouseId: null })
   const [shopTab, setShopTab] = useState<ShopCategory | 'case'>('outfit')
   const [shopMessage, setShopMessage] = useState('')
   const shopUnlocked = Boolean(currentUser?.startCompleted)
@@ -113,7 +113,7 @@ export function SportikPage() {
     if (!currentUser) return
     setClosedIds(readClosedChallenges(currentUser.id))
     setOwnedIds(readOwnedIds(currentUser.id))
-    setEquippedId(readEquippedId(currentUser.id))
+    setEquip(readEquip(currentUser.id))
     try {
       const seen = localStorage.getItem(hintsStorageKey(currentUser.id))
       if (!seen && searchParams.get('shop') !== '1') setHintStep(0)
@@ -138,8 +138,11 @@ export function SportikPage() {
   const stage = resolveStage(visits, closedCount)
   const goal = nextProgress(closedCount, stage)
   const visitRatio = Math.min(1, visits / goal.visitTarget)
-  const modelUrl = resolveDisplayModelUrl(stage, equippedId)
+  const unlockedKeys = currentUser ? buildUnlockedKeySet(state, currentUser.id) : new Set<SportBodyKey>()
+  const unlockedRows = currentUser ? unlockedSportRows(state, currentUser.id) : []
+  const modelUrl = resolveDisplayModelUrl(stage, currentUser, equip, unlockedKeys)
   const balance = currentUser ? availableBalance(points, currentUser.id) : 0
+  const bodyGender = profileBodyGender(currentUser)
 
   const persistOwned = (ids: string[]) => {
     if (!currentUser) return
@@ -156,16 +159,18 @@ export function SportikPage() {
     return true
   }
 
+  const persistEquip = (next: StoredEquip) => {
+    if (!currentUser) return
+    writeEquip(currentUser.id, next)
+    setEquip(next)
+  }
+
   const purchaseItem = (itemId: string) => {
     if (!currentUser) return
-    const item = SHOP_ITEMS.find((entry) => entry.id === itemId)
+    const item = WAREHOUSE_SHOP.find((entry) => entry.id === itemId)
     if (!item) return
     if (ownedIds.includes(item.id)) {
-      setShopMessage('Предмет уже в коллекции.')
-      return
-    }
-    if (!stageMeetsRequirement(stage, item.minStage)) {
-      setShopMessage(`Нужен уровень «${item.minStage ? STAGE_LABELS[item.minStage] : 'Новичок'}».`)
+      setShopMessage('Предмет уже на складе.')
       return
     }
     if (item.price > 0 && !spendPoints(item.price)) {
@@ -173,7 +178,7 @@ export function SportikPage() {
       return
     }
     persistOwned([...ownedIds, item.id])
-    setShopMessage(`«${item.title}» добавлен в коллекцию.`)
+    setShopMessage(`«${item.title}» добавлен на склад.`)
   }
 
   const openCase = (caseId: string) => {
@@ -190,11 +195,22 @@ export function SportikPage() {
     setShopMessage(`Выпало: «${loot.title}» (${loot.rarity}).`)
   }
 
-  const equipItem = (itemId: string | null) => {
-    if (!currentUser) return
-    writeEquippedId(currentUser.id, itemId)
-    setEquippedId(itemId)
-    setShopMessage(itemId ? 'Облик обновлён.' : 'Показана форма по уровню прогрессии.')
+  const equipWarehouse = (itemId: string | null) => {
+    persistEquip({ sportKey: null, variantIndex: null, warehouseId: itemId })
+    setShopMessage(itemId ? 'Предмет со склада надет.' : 'Склад снят.')
+  }
+
+  const equipBaseBody = () => {
+    persistEquip({ sportKey: null, variantIndex: null, warehouseId: null })
+  }
+
+  const equipSportBody = (sportKey: SportBodyKey, variantIndex: number) => {
+    const row = unlockedRows.find((entry) => entry.key === sportKey)
+    if (!row) return
+    const canPick = stage === 'hight'
+    const allowed = canPick ? variantIndex : stageVariantIndex(stage, row.gender)
+    if (!canPick && variantIndex !== allowed) return
+    persistEquip({ sportKey, variantIndex: canPick ? variantIndex : null, warehouseId: null })
   }
   const selectedChallenge = sportikChallenges.find((item) => item.id === selectedChallengeId) ?? null
 
@@ -361,22 +377,24 @@ export function SportikPage() {
             {panel === 'shop' && (
               <ShopPanel
                 balance={balance}
-                stage={stage}
                 ownedIds={ownedIds}
                 shopTab={shopTab}
                 message={shopMessage}
                 onTab={setShopTab}
                 onBuy={purchaseItem}
                 onOpenCase={openCase}
-                onEquip={equipItem}
               />
             )}
             {panel === 'customize' && (
               <CustomizePanel
                 stage={stage}
+                gender={bodyGender}
+                equip={equip}
+                unlockedRows={unlockedRows}
                 ownedIds={ownedIds}
-                equippedId={equippedId}
-                onEquip={equipItem}
+                onEquipBase={equipBaseBody}
+                onEquipSport={equipSportBody}
+                onEquipWarehouse={equipWarehouse}
               />
             )}
             {panel === 'challenges' && (
@@ -446,40 +464,34 @@ export function SportikPage() {
 
 function ShopPanel({
   balance,
-  stage,
   ownedIds,
   shopTab,
   message,
   onTab,
   onBuy,
   onOpenCase,
-  onEquip,
 }: {
   balance: number
-  stage: SportikStage
   ownedIds: string[]
   shopTab: ShopCategory | 'case'
   message: string
   onTab: (tab: ShopCategory | 'case') => void
   onBuy: (id: string) => void
   onOpenCase: (id: string) => void
-  onEquip: (id: string | null) => void
 }) {
-  const items = shopTab === 'case'
-    ? []
-    : SHOP_ITEMS.filter((item) => item.category === shopTab)
+  const items = shopTab === 'case' ? [] : WAREHOUSE_SHOP.filter((item) => item.category === shopTab)
 
   return (
     <div className="max-h-[min(22rem,50vh)] space-y-3 overflow-y-auto px-1 pb-1">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-white">Магазин</p>
+        <p className="text-sm font-semibold text-white">Магазин → склад</p>
         <p className="rounded-full bg-accent/15 px-2.5 py-1 text-[11px] font-bold text-accent">{balance} очков</p>
       </div>
       <p className="text-xs leading-5 text-muted">
-        Очки за посещения и челленжи. Чемпионские скины — с уровня «Титан». Токены за 1–3 место на турнирах подключим отдельно.
+        Формы по видам спорта открываются после посещения события и настраиваются в кастомизации. Здесь — только складские вещи и кейсы.
       </p>
       <div className="flex flex-wrap gap-1.5">
-        {shopTabs.map((tab) => (
+        {SHOP_TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -509,11 +521,14 @@ function ShopPanel({
             </div>
           ))}
         </div>
+      ) : shopTab === 'champion' ? (
+        <p className="rounded-xl border border-dashed border-white/15 px-3 py-4 text-xs text-muted">
+          Трофеи за 1–2–3 место на турнирах (токены чемпиона) появятся в следующем обновлении.
+        </p>
       ) : (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {items.map((item) => {
             const owned = ownedIds.includes(item.id)
-            const locked = !stageMeetsRequirement(stage, item.minStage)
             return (
               <div key={item.id} className="rounded-2xl border border-white/10 bg-card-elevated p-3">
                 <div className="flex items-start justify-between gap-2">
@@ -521,26 +536,15 @@ function ShopPanel({
                   {item.badge && <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold text-muted">{item.badge}</span>}
                 </div>
                 <p className="mt-1 text-[11px] leading-4 text-muted">{item.description}</p>
-                <p className="mt-2 text-xs font-semibold text-accent">{item.price === 0 ? 'Бесплатно' : `${item.price} очков`}</p>
-                <div className="mt-2 flex gap-2">
-                  <button
-                    type="button"
-                    disabled={owned || locked}
-                    onClick={() => onBuy(item.id)}
-                    className="flex-1 rounded-xl border border-white/10 py-2 text-[11px] font-bold text-white disabled:opacity-40"
-                  >
-                    {owned ? 'Куплено' : locked ? 'Закрыто' : 'Купить'}
-                  </button>
-                  {owned && (
-                    <button
-                      type="button"
-                      onClick={() => onEquip(item.id)}
-                      className="flex-1 rounded-xl bg-accent/20 py-2 text-[11px] font-bold text-accent"
-                    >
-                      Надеть
-                    </button>
-                  )}
-                </div>
+                <p className="mt-2 text-xs font-semibold text-accent">{item.price} очков</p>
+                <button
+                  type="button"
+                  disabled={owned}
+                  onClick={() => onBuy(item.id)}
+                  className="mt-2 w-full rounded-xl border border-white/10 py-2 text-[11px] font-bold text-white disabled:opacity-40"
+                >
+                  {owned ? 'На складе' : 'Купить'}
+                </button>
               </div>
             )
           })}
@@ -552,57 +556,114 @@ function ShopPanel({
 
 function CustomizePanel({
   stage,
+  gender,
+  equip,
+  unlockedRows,
   ownedIds,
-  equippedId,
-  onEquip,
+  onEquipBase,
+  onEquipSport,
+  onEquipWarehouse,
 }: {
   stage: SportikStage
+  gender: 'male' | 'female'
+  equip: StoredEquip
+  unlockedRows: SportBodyRow[]
   ownedIds: string[]
-  equippedId: string | null
-  onEquip: (id: string | null) => void
+  onEquipBase: () => void
+  onEquipSport: (sportKey: SportBodyKey, variantIndex: number) => void
+  onEquipWarehouse: (id: string | null) => void
 }) {
   const ownedItems = ownedIds
     .map((id) => findOwnedItem(id))
     .filter((item): item is NonNullable<typeof item> => Boolean(item))
+  const canPickVariant = stage === 'hight'
+  const baseActive = !equip.warehouseId && !equip.sportKey
 
   return (
-    <div className="max-h-[min(22rem,50vh)] space-y-3 overflow-y-auto px-1 pb-1">
+    <div className="max-h-[min(22rem,50vh)] space-y-4 overflow-y-auto px-1 pb-1">
       <p className="text-sm font-semibold text-white">Кастомизация</p>
       <p className="text-xs leading-5 text-muted">
-        Базовая форма по уровню: <span className="font-semibold text-white">{STAGE_LABELS[stage]}</span>. Наденьте купленный скин или вернитесь к прогрессии.
+        Уровень тамагочи: <span className="font-semibold text-white">{STAGE_LABELS[stage]}</span>.
+        {canPickVariant ? ' Можно выбрать любую фигуру в открытом виде спорта.' : ' Телосложение подстраивается под уровень автоматически.'}
       </p>
+
       <button
         type="button"
-        onClick={() => onEquip(null)}
+        onClick={onEquipBase}
         className={`w-full rounded-2xl border px-3 py-3 text-left text-sm ${
-          equippedId === null ? 'border-accent/50 bg-accent/10 text-white' : 'border-white/10 bg-card-elevated text-muted'
+          baseActive ? 'border-accent/50 bg-accent/10 text-white' : 'border-white/10 bg-card-elevated text-muted'
         }`}
       >
-        <span className="font-semibold">Форма уровня</span>
-        <span className="mt-0.5 block text-[11px]">Модель «{STAGE_LABELS[stage]}»</span>
+        <span className="font-semibold">Базовая модель</span>
+        <span className="mt-0.5 block text-[11px]">{gender === 'female' ? 'Женская, полная форма' : 'Мужская, тощая форма'}</span>
       </button>
-      {ownedItems.length === 0 ? (
-        <p className="text-xs text-muted">Купите облик в магазине или откройте кейс.</p>
+
+      {unlockedRows.length === 0 ? (
+        <p className="text-xs text-muted">Сходите на одно прошедшее мероприятие по виду спорта — здесь появится строка из трёх моделей.</p>
       ) : (
-        <div className="space-y-2">
-          {ownedItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onEquip(item.id)}
-              className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left ${
-                equippedId === item.id ? 'border-accent/50 bg-accent/10' : 'border-white/10 bg-card-elevated'
-              }`}
-            >
-              <span>
-                <span className="block text-sm font-semibold text-white">{item.title}</span>
-                <span className="block text-[11px] text-muted">{'badge' in item && item.badge ? item.badge : 'Коллекция'}</span>
-              </span>
-              {equippedId === item.id && <span className="text-[11px] font-bold text-accent">Надето</span>}
-            </button>
-          ))}
+        <div className="space-y-3">
+          {unlockedRows.map((row) => {
+            const activeSport = equip.sportKey === row.key && !equip.warehouseId
+            const forcedIndex = stageVariantIndex(stage, row.gender)
+            return (
+              <div key={row.key}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">{row.label}</p>
+                <div className="mt-2 grid grid-cols-3 gap-1.5">
+                  {row.variantLabels.map((label, index) => {
+                    const locked = !canPickVariant && index !== forcedIndex
+                    const selected = activeSport && (canPickVariant ? equip.variantIndex === index : index === forcedIndex)
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        disabled={locked}
+                        onClick={() => onEquipSport(row.key, index)}
+                        className={`rounded-xl border px-1 py-2.5 text-center text-[10px] font-semibold leading-tight transition-colors ${
+                          selected ? 'border-accent/60 bg-accent/15 text-accent' : 'border-white/10 bg-card-elevated text-muted'
+                        } disabled:opacity-35`}
+                      >
+                        {label}
+                        {locked && <Lock size={10} className="mx-auto mt-1 opacity-70" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
+
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Склад</p>
+        {ownedItems.length === 0 ? (
+          <p className="mt-2 text-xs text-muted">Купите вещи в магазине или откройте кейс.</p>
+        ) : (
+          <div className="mt-2 space-y-2">
+            {ownedItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onEquipWarehouse(item.id)}
+                className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left ${
+                  equip.warehouseId === item.id ? 'border-accent/50 bg-accent/10' : 'border-white/10 bg-card-elevated'
+                }`}
+              >
+                <span>
+                  <span className="block text-sm font-semibold text-white">{item.title}</span>
+                  <span className="block text-[11px] text-muted">{'badge' in item && item.badge ? item.badge : 'Склад'}</span>
+                </span>
+                {equip.warehouseId === item.id && <span className="text-[11px] font-bold text-accent">Надето</span>}
+              </button>
+            ))}
+            {equip.warehouseId && (
+              <button type="button" onClick={() => onEquipWarehouse(null)} className="text-[11px] font-semibold text-muted underline">
+                Снять предмет со склада
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -667,6 +728,6 @@ function ChallengeDetail({
   )
 }
 
-allModelUrls().forEach((url) => {
+allBodyAndWarehouseUrls(WAREHOUSE_SHOP.map((item) => item.modelFile)).forEach((url) => {
   useGLTF.preload(url)
 })

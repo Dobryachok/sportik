@@ -1,15 +1,7 @@
 import type { AppState } from '../../data/types'
 import { isPast } from '../../lib/format'
 
-import { stageModelUrl } from './models'
-
 export type SportikStage = 'default' | 'medium' | 'hight'
-
-export const STAGE_MODELS: Record<SportikStage, string> = {
-  default: stageModelUrl('default'),
-  medium: stageModelUrl('medium'),
-  hight: stageModelUrl('hight'),
-}
 
 export const STAGE_LABELS: Record<SportikStage, string> = {
   default: 'Новичок',
