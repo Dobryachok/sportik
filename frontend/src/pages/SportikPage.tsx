@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Bounds, Center, OrbitControls } from '@react-three/drei'
 import { TOUCH } from 'three'
@@ -91,6 +91,30 @@ const menuCards = [
 
 type PanelView = 'home' | 'challenges' | 'challenge-detail' | 'shop' | 'customize'
 
+const MOBILE_SHEET_COLLAPSED = 52
+const MOBILE_TOP_CHROME = 92
+
+function useMatchMobile() {
+  const [mobile, setMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 767px)').matches : false,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)')
+    const onChange = () => setMobile(mq.matches)
+    onChange()
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return mobile
+}
+
+function measureMobileSheetMax() {
+  const height = window.visualViewport?.height ?? window.innerHeight
+  const nav =
+    Number.parseFloat(getComputedStyle(document.documentElement).fontSize || '16') * 3.5 || 56
+  return Math.max(MOBILE_SHEET_COLLAPSED + 80, Math.round(height - nav - MOBILE_TOP_CHROME - 6))
+}
+
 export function SportikPage() {
   const { currentUser, state } = useAppData()
   const { theme } = useTheme()
@@ -98,6 +122,12 @@ export function SportikPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [sheetExpanded, setSheetExpanded] = useState(true)
+  const isMobile = useMatchMobile()
+  const [maxMobileSheetH, setMaxMobileSheetH] = useState(380)
+  const [mobileSheetH, setMobileSheetH] = useState(320)
+  const [sheetDragging, setSheetDragging] = useState(false)
+  const sheetDragRef = useRef<{ startY: number; startH: number } | null>(null)
+  const sheetDragMovedRef = useRef(false)
   const [hintStep, setHintStep] = useState<number | null>(null)
   const [panel, setPanel] = useState<PanelView>('home')
   const [selectedChallengeId, setSelectedChallengeId] = useState<string | null>(null)
@@ -127,14 +157,32 @@ export function SportikPage() {
   }, [currentUser, searchParams])
 
   useEffect(() => {
+    const updateMax = () => setMaxMobileSheetH(measureMobileSheetMax())
+    updateMax()
+    window.addEventListener('resize', updateMax)
+    window.visualViewport?.addEventListener('resize', updateMax)
+    return () => {
+      window.removeEventListener('resize', updateMax)
+      window.visualViewport?.removeEventListener('resize', updateMax)
+    }
+  }, [])
+
+  useEffect(() => {
+    setMobileSheetH((height) =>
+      Math.min(Math.max(height, MOBILE_SHEET_COLLAPSED), maxMobileSheetH),
+    )
+  }, [maxMobileSheetH])
+
+  useEffect(() => {
     const openFromQuery = searchParams.get('shop') === '1'
     const justUnlocked = shopUnlocked && !wasShopUnlocked.current
     if (shopUnlocked && (openFromQuery || justUnlocked)) {
       setSheetExpanded(true)
+      setMobileSheetH(maxMobileSheetH)
       setPanel('shop')
     }
     wasShopUnlocked.current = shopUnlocked
-  }, [searchParams, shopUnlocked])
+  }, [searchParams, shopUnlocked, maxMobileSheetH])
 
   const visits = currentUser ? countVisits(state, currentUser.id) : 0
   const closedCount = closedIds.length
@@ -272,16 +320,68 @@ export function SportikPage() {
     setHintStep((step) => (step === null ? null : step + 1))
   }
 
-  const sheetOpen = sheetExpanded || hintsOpen
+  const mobileSheetOpen = mobileSheetH > MOBILE_SHEET_COLLAPSED + 28
+  const sheetOpen = hintsOpen || (isMobile ? mobileSheetOpen : sheetExpanded)
   const panelTitle =
     panel === 'shop' ? 'Магазин' : panel === 'customize' ? 'Кастом' : panel === 'challenges' ? 'Челленжи' : panel === 'challenge-detail' ? 'Челлендж' : null
 
-  const expandSheet = () => setSheetExpanded(true)
+  const expandSheet = () => {
+    setSheetExpanded(true)
+    if (isMobile) setMobileSheetH(maxMobileSheetH)
+  }
   const collapseSheet = () => {
     if (hintsOpen) return
     setSheetExpanded(false)
+    if (isMobile) setMobileSheetH(MOBILE_SHEET_COLLAPSED)
     setPanel('home')
     setSelectedChallengeId(null)
+  }
+
+  const snapMobileSheet = (height: number) => {
+    const mid = (MOBILE_SHEET_COLLAPSED + maxMobileSheetH) / 2
+    const snapped = height < mid ? MOBILE_SHEET_COLLAPSED : maxMobileSheetH
+    setMobileSheetH(snapped)
+    setSheetExpanded(snapped > MOBILE_SHEET_COLLAPSED + 28)
+    if (snapped <= MOBILE_SHEET_COLLAPSED + 28) {
+      setPanel('home')
+      setSelectedChallengeId(null)
+    }
+  }
+
+  const onSheetHandlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!isMobile || hintsOpen) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    sheetDragRef.current = { startY: event.clientY, startH: mobileSheetH }
+    sheetDragMovedRef.current = false
+    setSheetDragging(true)
+  }
+
+  const onSheetHandlePointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!sheetDragRef.current) return
+    const delta = sheetDragRef.current.startY - event.clientY
+    if (Math.abs(delta) > 4) sheetDragMovedRef.current = true
+    const next = Math.min(
+      maxMobileSheetH,
+      Math.max(MOBILE_SHEET_COLLAPSED, sheetDragRef.current.startH + delta),
+    )
+    setMobileSheetH(next)
+  }
+
+  const onSheetHandlePointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!sheetDragRef.current) return
+    sheetDragRef.current = null
+    setSheetDragging(false)
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    } catch {
+      /* ignore */
+    }
+    if (!sheetDragMovedRef.current) {
+      if (mobileSheetOpen) collapseSheet()
+      else expandSheet()
+      return
+    }
+    snapMobileSheet(mobileSheetH)
   }
   const challengeHint =
     goal.challengesNeeded > 0
@@ -291,15 +391,25 @@ export function SportikPage() {
   const canvasBottomClass = sheetExpanded
     ? 'max-md:bottom-[min(58vh,24rem)]'
     : 'max-md:bottom-11'
+  const mobileCanvasStyle = isMobile
+    ? { bottom: mobileSheetH, top: '-0.75rem' as const }
+    : undefined
+  const mobileCamera = isMobile
+    ? { position: [0, 1.22, 2.72] as [number, number, number], fov: 37 }
+    : { position: [0, 1.15, 3.1] as [number, number, number], fov: 40 }
+  const boundsMargin = isMobile ? 0.9 : 1.15
 
   return (
     <div
-      className="relative min-h-[calc(100dvh-var(--app-nav-height)-env(safe-area-inset-bottom,0px))] w-full flex-1 overflow-hidden md:min-h-[32rem] md:rounded-[1.35rem]"
+      className="relative h-[calc(100dvh-var(--app-nav-height)-env(safe-area-inset-bottom,0px))] w-full flex-1 overflow-hidden md:h-auto md:min-h-[32rem] md:rounded-[1.35rem]"
       style={{ ['--sportik-nav' as string]: 'calc(var(--app-nav-height) + env(safe-area-inset-bottom, 0px))' }}
     >
       <Canvas
-        className={`absolute inset-x-0 top-0 bottom-0 transition-[bottom] duration-300 ease-out md:inset-0 ${canvasBottomClass}`}
-        camera={{ position: [0, 1.15, 3.1], fov: 40 }}
+        className={`absolute inset-x-0 top-0 bottom-0 md:inset-0 ${
+          isMobile ? '' : canvasBottomClass
+        } ${isMobile && !sheetDragging ? 'transition-[bottom,top] duration-300 ease-out' : ''}`}
+        style={mobileCanvasStyle}
+        camera={mobileCamera}
         gl={{ antialias: true }}
         dpr={[1, 2]}
       >
@@ -307,8 +417,8 @@ export function SportikPage() {
         <ambientLight intensity={0.7} />
         <directionalLight position={[4, 6, 4]} intensity={1.3} />
         <directionalLight position={[-3, 2, -2]} intensity={0.35} />
-        <Bounds key={modelUrl} fit margin={1.15}>
-          <Center>
+        <Bounds key={modelUrl} fit margin={boundsMargin}>
+          <Center position={isMobile ? [0, 0.06, 0] : [0, 0, 0]}>
             <SportikAvatar targetUrl={modelUrl} fallbackUrl={fallbackModelUrl} />
           </Center>
         </Bounds>
@@ -325,7 +435,7 @@ export function SportikPage() {
       </Canvas>
 
       {showModelLoadProgress && (
-        <div className="pointer-events-none absolute inset-x-0 top-[42%] z-[12] flex -translate-y-1/2 justify-center px-8">
+        <div className="pointer-events-none absolute inset-x-0 top-[38%] z-[12] flex -translate-y-1/2 justify-center px-8 md:top-[42%]">
           <div className="w-full max-w-[14rem] rounded-2xl border border-white/10 bg-card/92 px-4 py-3 shadow-[0_12px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl">
             <p className="text-center text-xs font-medium text-white/90">Загрузка модели</p>
             <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -357,25 +467,47 @@ export function SportikPage() {
       </div>
 
       <div
-        className={`pointer-events-auto absolute inset-x-0 z-20 flex flex-col overflow-hidden border-t border-white/10 bg-card/98 shadow-[0_-16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-[max-height] duration-300 ease-out max-md:bottom-0 md:bottom-3 md:left-1/2 md:w-full md:max-w-lg md:-translate-x-1/2 md:rounded-t-[1.35rem] md:border md:border-b-0 ${
-          sheetExpanded
+        className={`pointer-events-auto z-20 flex flex-col overflow-hidden border-t border-white/10 bg-card/98 shadow-[0_-16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl max-md:fixed-above-nav max-md:inset-x-0 max-md:rounded-t-[1.35rem] md:absolute md:bottom-3 md:left-1/2 md:w-full md:max-w-lg md:-translate-x-1/2 md:rounded-t-[1.35rem] md:border md:border-b-0 ${
+          isMobile ? '' : 'transition-[max-height] duration-300 ease-out'
+        } ${
+          !isMobile && sheetExpanded
             ? 'max-h-[min(calc(100dvh-var(--sportik-nav)-3.25rem),42rem)] md:max-h-[min(72vh,34rem)]'
-            : 'max-h-11 md:max-h-12'
+            : !isMobile
+              ? 'max-h-11 md:max-h-12'
+              : ''
         }`}
+        style={
+          isMobile
+            ? {
+                height: mobileSheetH,
+                transition: sheetDragging ? 'none' : 'height 0.28s ease-out',
+              }
+            : undefined
+        }
       >
         <button
           type="button"
-          onClick={() => (sheetExpanded ? collapseSheet() : expandSheet())}
+          onPointerDown={onSheetHandlePointerDown}
+          onPointerMove={onSheetHandlePointerMove}
+          onPointerUp={onSheetHandlePointerUp}
+          onPointerCancel={onSheetHandlePointerUp}
+          onClick={
+            isMobile
+              ? undefined
+              : () => (sheetExpanded ? collapseSheet() : expandSheet())
+          }
           disabled={hintsOpen}
-          className="flex w-full shrink-0 flex-col items-center gap-1 border-b border-white/5 py-2.5 disabled:opacity-60"
-          aria-label={sheetExpanded ? 'Свернуть меню' : 'Развернуть меню'}
+          className="flex w-full shrink-0 touch-none flex-col items-center gap-1.5 border-b border-white/5 py-3 disabled:opacity-60 max-md:cursor-grab max-md:active:cursor-grabbing"
+          aria-label={sheetOpen ? 'Потяните, чтобы изменить высоту меню' : 'Развернуть меню'}
         >
-          <span className="h-1 w-12 rounded-full bg-white/25" />
-          {!sheetExpanded && <span className="text-[11px] font-medium text-muted">Меню</span>}
+          <span className="h-1.5 w-14 rounded-full bg-white/30" />
+          {isMobile && !mobileSheetOpen && (
+            <span className="text-[11px] font-medium text-muted">Меню</span>
+          )}
         </button>
 
         {sheetOpen && (
-          <div className="flex min-h-0 flex-1 flex-col px-4 pb-2 pt-1 max-md:max-h-[calc(100dvh-var(--sportik-nav)-4.5rem)]">
+          <div className="flex min-h-0 flex-1 flex-col px-4 pb-2 pt-1 max-md:overflow-hidden md:max-h-none">
             <div className="relative mb-2 flex min-h-8 shrink-0 items-center justify-center">
               {panel !== 'home' && !hintsOpen ? (
                 <>
