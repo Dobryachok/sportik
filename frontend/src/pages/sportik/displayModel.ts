@@ -5,7 +5,6 @@ import {
   defaultBodyModelUrl,
   findSportBodyRow,
   profileBodyGender,
-  SPORT_BODY_ROWS,
   sportBodyModelUrl,
   stageVariantIndex,
   unlockedSportRows,
@@ -43,13 +42,4 @@ export function resolveDisplayModelUrl(
 
 export function buildUnlockedKeySet(state: AppState, userId: string) {
   return new Set(unlockedSportRows(state, userId).map((row) => row.key))
-}
-
-export function allBodyAndWarehouseUrls(warehouseFiles: string[]) {
-  const files = new Set<string>()
-  SPORT_BODY_ROWS.forEach((row) => row.variants.forEach((file) => files.add(sportikModelPath(file))))
-  files.add(defaultBodyModelUrl('male'))
-  files.add(defaultBodyModelUrl('female'))
-  warehouseFiles.forEach((file) => files.add(sportikModelPath(file)))
-  return [...files]
 }

@@ -1,5 +1,5 @@
+import { lazy, Suspense, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import type { ReactNode } from 'react';
 
 import { AppShell } from './AppShell';
 import { RequireAuth } from '../components/RequireAuth';
@@ -21,7 +21,7 @@ import { ProfilePage } from '../pages/ProfilePage';
 import { PublicProfilePage } from '../pages/PublicProfilePage';
 import { RegisterPage } from '../pages/RegisterPage';
 import { SportHubPage } from '../pages/SportHubPage';
-import { SportikPage } from '../pages/SportikPage';
+const SportikPage = lazy(() => import('../pages/SportikPage').then((module) => ({ default: module.SportikPage })));
 import { TamagotchiPage } from '../pages/TamagotchiPage';
 import { TournamentsPage } from '../pages/TournamentsPage';
 import { DiscoveryPage } from '../pages/DiscoveryPage';
@@ -92,7 +92,17 @@ export function AppRoutes() {
 
                 <Route
                     path="sportik"
-                    element={protectedPage(<SportikPage />)}
+                    element={protectedPage(
+                        <Suspense
+                            fallback={
+                                <div className="flex min-h-[50vh] flex-1 items-center justify-center px-4 text-sm text-muted">
+                                    Загрузка Спортика…
+                                </div>
+                            }
+                        >
+                            <SportikPage />
+                        </Suspense>,
+                    )}
                 />
 
                 <Route

@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { Bounds, Center, OrbitControls, useGLTF } from '@react-three/drei'
+import { Bounds, Center, OrbitControls } from '@react-three/drei'
 import { TOUCH } from 'three'
 import { SportikModel } from './sportik/SportikModel'
 import { ChevronLeft, Lock, Palette, ShoppingBag, Trophy } from 'lucide-react'
@@ -20,7 +20,8 @@ import {
   sportikChallenges,
   type SportikChallenge,
 } from './sportik/challenges'
-import { allBodyAndWarehouseUrls, buildUnlockedKeySet, resolveDisplayModelUrl } from './sportik/displayModel'
+import { buildUnlockedKeySet, resolveDisplayModelUrl } from './sportik/displayModel'
+import { preloadSportikFile, preloadSportikGlb, preloadSportRowForStage, preloadSportRowVariants } from './sportik/modelLoader'
 import {
   availableBalance,
   readEquip,
@@ -33,6 +34,7 @@ import {
 } from './sportik/loadout'
 import {
   profileBodyGender,
+  sportBodyModelUrl,
   stageVariantIndex,
   unlockedSportRows,
   type SportBodyKey,
@@ -144,6 +146,64 @@ export function SportikPage() {
   const balance = currentUser ? availableBalance(points, currentUser.id) : 0
   const bodyGender = profileBodyGender(currentUser)
 
+  useEffect(() => {
+    preloadSportikGlb(modelUrl)
+  }, [modelUrl])
+
+  useEffect(() => {
+    if (!currentUser) return
+    const storageKey = `sportik-preloaded-sports:${currentUser.id}`
+    let known = new Set<SportBodyKey>()
+    try {
+      known = new Set(JSON.parse(sessionStorage.getItem(storageKey) || '[]') as SportBodyKey[])
+    } catch { /* ignore */ }
+    let changed = false
+    for (const row of unlockedRows) {
+      if (known.has(row.key)) continue
+      known.add(row.key)
+      changed = true
+      preloadSportRowForStage(row, stage)
+    }
+    if (changed) {
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify([...known]))
+      } catch { /* ignore */ }
+    }
+  }, [currentUser, unlockedRows, stage])
+
+  const titanVariantsLoaded = useRef(false)
+  useEffect(() => {
+    if (stage !== 'hight') {
+      titanVariantsLoaded.current = false
+      return
+    }
+    if (titanVariantsLoaded.current) return
+    titanVariantsLoaded.current = true
+    for (const row of unlockedRows) preloadSportRowVariants(row)
+  }, [stage, unlockedRows])
+
+  useEffect(() => {
+    if (!currentUser) return
+    const storageKey = `sportik-preloaded-owned:${currentUser.id}`
+    let known = new Set<string>()
+    try {
+      known = new Set(JSON.parse(sessionStorage.getItem(storageKey) || '[]'))
+    } catch { /* ignore */ }
+    let changed = false
+    for (const id of ownedIds) {
+      if (known.has(id)) continue
+      known.add(id)
+      changed = true
+      const item = findOwnedItem(id)
+      if (item?.modelFile) preloadSportikFile(item.modelFile)
+    }
+    if (changed) {
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify([...known]))
+      } catch { /* ignore */ }
+    }
+  }, [currentUser, ownedIds])
+
   const persistOwned = (ids: string[]) => {
     if (!currentUser) return
     writeOwnedIds(currentUser.id, ids)
@@ -178,6 +238,7 @@ export function SportikPage() {
       return
     }
     persistOwned([...ownedIds, item.id])
+    preloadSportikFile(item.modelFile)
     setShopMessage(`«${item.title}» добавлен на склад.`)
   }
 
@@ -192,10 +253,15 @@ export function SportikPage() {
     const loot = rollCaseLoot(crate)
     const nextOwned = ownedIds.includes(loot.id) ? ownedIds : [...ownedIds, loot.id]
     persistOwned(nextOwned)
+    preloadSportikFile(loot.modelFile)
     setShopMessage(`Выпало: «${loot.title}» (${loot.rarity}).`)
   }
 
   const equipWarehouse = (itemId: string | null) => {
+    if (itemId) {
+      const item = findOwnedItem(itemId)
+      if (item?.modelFile) preloadSportikFile(item.modelFile)
+    }
     persistEquip({ sportKey: null, variantIndex: null, warehouseId: itemId })
     setShopMessage(itemId ? 'Предмет со склада надет.' : 'Склад снят.')
   }
@@ -210,6 +276,8 @@ export function SportikPage() {
     const canPick = stage === 'hight'
     const allowed = canPick ? variantIndex : stageVariantIndex(stage, row.gender)
     if (!canPick && variantIndex !== allowed) return
+    const url = sportBodyModelUrl(row, canPick ? variantIndex : allowed)
+    preloadSportikGlb(url)
     persistEquip({ sportKey, variantIndex: canPick ? variantIndex : null, warehouseId: null })
   }
   const selectedChallenge = sportikChallenges.find((item) => item.id === selectedChallengeId) ?? null
@@ -718,7 +786,3 @@ function ChallengeDetail({
     </div>
   )
 }
-
-allBodyAndWarehouseUrls(WAREHOUSE_SHOP.map((item) => item.modelFile)).forEach((url) => {
-  useGLTF.preload(url)
-})
