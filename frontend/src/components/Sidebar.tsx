@@ -1,8 +1,11 @@
 import { Link, useLocation } from 'react-router-dom'
-import { isNavActive, navItems } from '../app/navigation'
+import { useAppData } from '../app/AppDataContext'
+import { isNavActive, visibleNavItems } from '../app/navigation'
 
 export function Sidebar() {
   const { pathname } = useLocation()
+  const { currentUser } = useAppData()
+  const items = visibleNavItems(Boolean(currentUser))
 
   return (
     <aside className="hidden md:flex md:w-56 md:shrink-0 md:flex-col md:border-r md:border-white/10 md:bg-card/30 md:px-3 md:py-6">
@@ -11,7 +14,7 @@ export function Sidebar() {
         <p className="text-xs text-muted">СпортВместе</p>
       </div>
       <nav className="flex flex-col gap-1" aria-label="Основная навигация">
-        {navItems.map((item) => {
+        {items.map((item) => {
           const active = isNavActive(item, pathname)
           const Icon = item.icon
           return (

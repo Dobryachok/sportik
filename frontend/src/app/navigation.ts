@@ -1,4 +1,4 @@
-import { Bell, CalendarCheck, CircleCheck, Trophy, User } from 'lucide-react'
+import { Bell, CalendarCheck, CircleCheck, PersonStanding, Trophy, User } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 export interface NavItem {
@@ -8,6 +8,7 @@ export interface NavItem {
   icon: LucideIcon
   match?: (path: string) => boolean
   showBadge?: boolean
+  authOnly?: boolean
 }
 
 export const navItems: NavItem[] = [
@@ -20,7 +21,15 @@ export const navItems: NavItem[] = [
       p === '/' ||
       p.startsWith('/events') ||
       p.startsWith('/create-event') ||
-      p.startsWith('/sport'),
+      p.startsWith('/sport/'),
+  },
+  {
+    to: '/sportik',
+    label: 'Спортик',
+    shortLabel: 'Спортик',
+    icon: PersonStanding,
+    authOnly: true,
+    match: (p) => p === '/sportik' || p.startsWith('/sportik/'),
   },
   {
     to: '/tournaments',
@@ -56,4 +65,8 @@ export const navItems: NavItem[] = [
 export function isNavActive(item: NavItem, pathname: string): boolean {
   if (item.match) return item.match(pathname)
   return pathname === item.to
+}
+
+export function visibleNavItems(isAuthenticated: boolean): NavItem[] {
+  return navItems.filter((item) => !item.authOnly || isAuthenticated)
 }
