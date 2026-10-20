@@ -6,6 +6,7 @@ import { joinEventAsTeam } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
 import { PrimaryButton } from './PrimaryButton'
 import { getUserParticipation } from '../data/selectors'
+import { isPast } from '../lib/format'
 import type { Event } from '../data/types'
 
 interface EventJoinPanelProps {
@@ -36,9 +37,12 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
       .catch(() => setCaptainTeams([]))
   }, [])
 
+  const eventPast = isPast(event.startsAt)
   const seatsLeft = Math.max(0, event.capacity - (event.confirmedCount ?? 0))
   const activeParticipation = myPart && myPart.status !== 'cancelled' && myPart.status !== 'rejected'
-  const joinLabel = activeParticipation
+  const joinLabel = eventPast
+    ? 'Мероприятие прошло'
+    : activeParticipation
     ? myPart.status === 'waitlist'
       ? 'Вы в резерве'
       : myPart.status === 'pending'
@@ -51,6 +55,7 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
         : 'Подать заявку'
 
   const handleJoin = async () => {
+    if (eventPast) return
     if (await participate(event.id)) {
       onJoined?.()
       onClose()
@@ -60,7 +65,7 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
   const selectedTeam = captainTeams.find((team) => team.id === selectedTeamId)
 
   const handleTeamJoin = async () => {
-    if (!selectedTeamId || teamBusy) return
+    if (eventPast || !selectedTeamId || teamBusy) return
     setTeamBusy(true)
     setTeamConfirmOpen(false)
     setTeamMessage('')
@@ -110,7 +115,7 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
         <MessageCircle size={18} /> Обсудить событие в чате
       </Link>
       <div className="mt-6">
-        <PrimaryButton fullWidth onClick={() => void handleJoin()} disabled={Boolean(activeParticipation)}>
+        <PrimaryButton fullWidth onClick={() => void handleJoin()} disabled={eventPast || Boolean(activeParticipation)}>
           {joinLabel}
         </PrimaryButton>
       </div>
@@ -130,7 +135,7 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
           <PrimaryButton
             className="mt-3"
             fullWidth
-            disabled={teamBusy || !selectedTeamId}
+            disabled={eventPast || teamBusy || !selectedTeamId}
             onClick={() => setTeamConfirmOpen(true)}
           >
             {teamBusy ? 'Записываем…' : 'Зарегистрировать команду'}

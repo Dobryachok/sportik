@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
-import type { Event, Sport, User } from '../data/types'
-import { formatEventDate } from '../lib/format'
+import type { Event, ParticipationStatus, Sport, User } from '../data/types'
+import { formatEventDate, isPast } from '../lib/format'
 import { AvatarStack } from './AvatarStack'
 import { StarRating } from './StarRating'
 
@@ -11,6 +11,7 @@ interface EventCardProps {
   participantCount: number
   showTimeline?: boolean
   scheduleTag?: 'upcoming' | 'past'
+  participationStatus?: ParticipationStatus
 }
 
 export function EventCard({
@@ -20,8 +21,10 @@ export function EventCard({
   participantCount,
   showTimeline = true,
   scheduleTag,
+  participationStatus,
 }: EventCardProps) {
   const { date, day, time } = formatEventDate(event.startsAt)
+  const resolvedScheduleTag = scheduleTag ?? (isPast(event.startsAt) ? 'past' : undefined)
   const coverImage = event.imageUrl?.trim() || ''
 
   return (
@@ -74,14 +77,19 @@ export function EventCard({
                 Турнир
               </span>
             )}
-            {scheduleTag === 'upcoming' && (
+            {resolvedScheduleTag === 'upcoming' && (
               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${coverImage ? 'border-white/40 text-white' : 'border-accent/50 bg-accent/10 text-accent'}`}>
                 Скоро
               </span>
             )}
-            {scheduleTag === 'past' && (
+            {resolvedScheduleTag === 'past' && (
               <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${coverImage ? 'border-white/30 text-white/80' : 'border-black/20 bg-black/5 text-black/60'}`}>
                 Прошло
+              </span>
+            )}
+            {participationStatus === 'waitlist' && (
+              <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${coverImage ? 'border-warning/70 text-warning' : 'border-warning/70 bg-warning/10 text-warning'}`}>
+                Резерв
               </span>
             )}
             {event.district && (

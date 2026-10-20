@@ -20,7 +20,7 @@ import {
   getEventParticipants,
   getUserParticipation,
 } from '../data/selectors'
-import { formatEventDate } from '../lib/format'
+import { formatEventDate, isPast } from '../lib/format'
 import type { User } from '../data/types'
 
 export function EventDetailPage() {
@@ -78,8 +78,11 @@ export function EventDetailPage() {
   const mapHref = event.latitude != null && event.longitude != null
     ? `https://yandex.ru/maps/?pt=${event.longitude},${event.latitude}&z=16&l=map`
     : `https://yandex.ru/maps/?text=${encodeURIComponent([event.city, event.address].filter(Boolean).join(', '))}`
-  const canJoin = !unpublished && (!myPart || myPart.status === 'rejected' || myPart.status === 'cancelled')
-  const showMobileCta = canJoin || (!unpublished && (myPart?.status === 'pending' || myPart?.status === 'waitlist'))
+  const eventPast = isPast(event.startsAt)
+  const canJoin = !unpublished && !eventPast && (!myPart || myPart.status === 'rejected' || myPart.status === 'cancelled')
+  const showMobileCta =
+    (!eventPast && (canJoin || myPart?.status === 'pending' || myPart?.status === 'waitlist'))
+    || (eventPast && myPart?.status === 'waitlist')
   const leaveConfirmedEvent = async () => {
     if (!window.confirm('Покинуть это мероприятие?')) return
     await leave(event.id)
@@ -96,6 +99,7 @@ export function EventDetailPage() {
   }
 
   const openJoin = () => {
+    if (eventPast) return
     if (!currentUser) {
       navigate('/login', { state: { from: `/events/${event.id}` } })
       return
@@ -146,6 +150,11 @@ export function EventDetailPage() {
           <div className="absolute bottom-0 left-0 right-0 p-5 md:p-7">
             <div className="mb-3 flex flex-wrap items-center gap-2">
               {sport && <span className="rounded-full bg-accent px-3 py-1 text-xs font-bold text-white">{sport.name}</span>}
+              {eventPast && (
+                <span className="rounded-full border border-white/35 bg-black/25 px-3 py-1 text-xs font-semibold text-white/90">
+                  Прошло
+                </span>
+              )}
               <span className="rounded-full border border-white/30 bg-black/20 px-3 py-1 text-xs font-semibold text-white/90">
                 {date}
               </span>
@@ -182,6 +191,11 @@ export function EventDetailPage() {
         {unpublished && (
           <p className="mt-4 rounded-xl border border-warning/50 bg-warning/10 px-3 py-2 text-sm text-warning">
             Мероприятие снято с публикации
+          </p>
+        )}
+        {eventPast && !unpublished && (
+          <p className="mt-4 rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2 text-sm text-muted">
+            Событие уже прошло — запись недоступна.
           </p>
         )}
         {moderationError && <p role="alert" className="mt-3 text-sm text-rose-300">{moderationError}</p>}
@@ -260,13 +274,16 @@ export function EventDetailPage() {
               {event.joinMode === 'open' ? 'Зарегистрироваться' : 'Подать заявку'}
             </PrimaryButton>
           )}
-          {!unpublished && myPart?.status === 'pending' && (
+          {eventPast && !canJoin && !myPart?.status && (
+            <PrimaryButton fullWidth disabled className="hidden md:flex">Мероприятие прошло</PrimaryButton>
+          )}
+          {!eventPast && myPart?.status === 'pending' && (
             <PrimaryButton fullWidth disabled className="hidden md:flex">Заявка отправлена</PrimaryButton>
           )}
-          {!unpublished && myPart?.status === 'waitlist' && (
+          {myPart?.status === 'waitlist' && (
             <PrimaryButton fullWidth disabled className="hidden md:flex">Вы в резерве</PrimaryButton>
           )}
-          {!unpublished && myPart && (myPart.status === 'confirmed' || myPart.status === 'pending' || myPart.status === 'waitlist') && (
+          {!eventPast && myPart && (myPart.status === 'confirmed' || myPart.status === 'pending' || myPart.status === 'waitlist') && (
             <PrimaryButton variant="outline" fullWidth onClick={() => void leaveConfirmedEvent()}>Покинуть событие</PrimaryButton>
           )}
           {currentUser?.role === 'admin' && !unpublished && <PrimaryButton variant="outline" fullWidth onClick={() => void unpublishByAdmin()}>Снять с публикации</PrimaryButton>}
@@ -294,6 +311,8 @@ export function EventDetailPage() {
             </PrimaryButton>
           ) : myPart?.status === 'waitlist' ? (
             <PrimaryButton fullWidth disabled>Вы в резерве</PrimaryButton>
+          ) : eventPast ? (
+            <PrimaryButton fullWidth disabled>Мероприятие прошло</PrimaryButton>
           ) : (
             <PrimaryButton fullWidth disabled>Заявка отправлена</PrimaryButton>
           )}

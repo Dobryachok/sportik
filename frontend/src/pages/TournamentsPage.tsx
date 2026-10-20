@@ -4,10 +4,10 @@ import { useAppData } from '../app/AppDataContext'
 import { CityChooser } from '../components/CityChooser'
 import { EventCard, getParticipantAvatars } from '../components/EventCard'
 import { PageHeader } from '../components/PageHeader'
-import { getEventParticipants, getPublishedEvents } from '../data/selectors'
+import { getEventParticipants, getPublishedEvents, getUserParticipation } from '../data/selectors'
 
 export function TournamentsPage() {
-  const { state } = useAppData()
+  const { state, currentUser } = useAppData()
   const tournaments = getPublishedEvents(state)
     .filter((event) => event.eventType === 'tournament')
     .sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime())
@@ -22,7 +22,16 @@ export function TournamentsPage() {
       <div className="grid grid-cols-1 gap-4 min-[720px]:grid-cols-2">
         {tournaments.length === 0 ? <div className="rounded-[1.35rem] border border-dashed border-white/15 px-5 py-10 text-center text-sm leading-relaxed text-muted">В этом городе пока нет турниров. Создайте первый.</div> : tournaments.map((event) => {
           const participants = getEventParticipants(state, event.id)
-          return <EventCard key={event.id} event={event} sport={state.sports.find((sport) => sport.id === event.sportId)} participantCount={event.confirmedCount ?? participants.length} participantAvatars={getParticipantAvatars(state.users, participants.map((participant) => participant.userId))} />
+          return (
+            <EventCard
+              key={event.id}
+              event={event}
+              sport={state.sports.find((sportItem) => sportItem.id === event.sportId)}
+              participantCount={event.confirmedCount ?? participants.length}
+              participantAvatars={getParticipantAvatars(state.users, participants.map((participant) => participant.userId))}
+              participationStatus={currentUser ? getUserParticipation(state, event.id, currentUser.id)?.status : undefined}
+            />
+          )
         })}
       </div>
       <Link to="/create-event?type=tournament" className="mt-6 flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-accent px-5 text-sm font-bold text-white shadow-[0_8px_20px_rgba(0,174,239,0.22)] transition-colors hover:bg-accent-hover"><Plus size={18} /> Создать турнир</Link>

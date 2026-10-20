@@ -172,6 +172,14 @@ def timestamp(value):
     return value.isoformat() if value else None
 
 
+def event_has_started(start_at) -> bool:
+    if start_at is None:
+        return False
+    if start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=timezone.utc)
+    return start_at <= datetime.now(timezone.utc)
+
+
 async def rows(session, query, params=None):
     result = await session.execute(text(query), params or {})
     return [dict(row) for row in result.mappings().all()]
@@ -1869,8 +1877,10 @@ async def join(event_id: str, user=Depends(require_user), session: AsyncSession 
     activity = None
     await session.commit()
     async with session.begin():
-        event = (await session.execute(text("SELECT id,organizer_id,capacity,join_mode,status,title FROM events WHERE public_id=:id FOR UPDATE"), {'id': event_id})).mappings().first()
+        event = (await session.execute(text("SELECT id,organizer_id,capacity,join_mode,status,title,start_at FROM events WHERE public_id=:id FOR UPDATE"), {'id': event_id})).mappings().first()
         if not event or event['status'] != 'PUBLISHED': raise HTTPException(404, 'Published event not found')
+        if event_has_started(event['start_at']):
+            raise HTTPException(409, 'Event has already started')
         existing = (await session.execute(text('SELECT id,status FROM event_registrations WHERE event_id=:event AND user_id=:user'),
                                                {'event': event['id'], 'user': user['db_id']})).mappings().first()
         if existing and existing['status'] != 'CANCELLED':
@@ -1919,11 +1929,13 @@ async def join_event_as_team(
     await session.commit()
     async with session.begin():
         event = (await session.execute(
-            text("SELECT id,organizer_id,capacity,join_mode,status,title FROM events WHERE public_id=:id FOR UPDATE"),
+            text("SELECT id,organizer_id,capacity,join_mode,status,title,start_at FROM events WHERE public_id=:id FOR UPDATE"),
             {'id': event_id},
         )).mappings().first()
         if not event or event['status'] != 'PUBLISHED':
             raise HTTPException(404, 'Published event not found')
+        if event_has_started(event['start_at']):
+            raise HTTPException(409, 'Event has already started')
         team = (await session.execute(
             text('''SELECT t.id FROM teams t
                 JOIN team_members tm ON tm.team_id = t.id

@@ -4,7 +4,7 @@ import { useAppData } from '../app/AppDataContext'
 import { EventCard, getParticipantAvatars } from '../components/EventCard'
 import { FilterChips } from '../components/FilterChips'
 import { PageHeader } from '../components/PageHeader'
-import { getEventParticipants } from '../data/selectors'
+import { getEventParticipants, getUserParticipation } from '../data/selectors'
 import { isPast } from '../lib/format'
 
 const tabs = [
@@ -74,6 +74,7 @@ export function MyEventsPage() {
                 participantCount={event.confirmedCount ?? participants.length}
                 participantAvatars={getParticipantAvatars(state.users, participants.map((participant) => participant.userId))}
                 scheduleTag={tab === 'favorites' ? (isPast(event.startsAt) ? 'past' : 'upcoming') : undefined}
+                participationStatus={userId ? getUserParticipation(state, event.id, userId)?.status : undefined}
               />
             )
           })}

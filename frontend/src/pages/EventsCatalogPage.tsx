@@ -8,7 +8,7 @@ import { EventCalendarPicker, eventDateKey } from '../components/EventCalendarPi
 import { EventCard, getParticipantAvatars } from '../components/EventCard'
 import { FilterChips } from '../components/FilterChips'
 import { PageHeader } from '../components/PageHeader'
-import { getEventParticipants, getPublishedEvents } from '../data/selectors'
+import { getEventParticipants, getPublishedEvents, getUserParticipation } from '../data/selectors'
 import { sameDay } from '../lib/format'
 import type { Event } from '../data/types'
 
@@ -40,7 +40,7 @@ function matchesCatalogFilters(
 }
 
 export function EventsCatalogPage() {
-  const { state, refresh } = useAppData()
+  const { state, refresh, currentUser } = useAppData()
   const [searchParams] = useSearchParams()
   const requestedSportId = searchParams.get('sport') ?? ''
   const requestedType = searchParams.get('type') as Event['eventType'] | null
@@ -138,7 +138,16 @@ export function EventsCatalogPage() {
           {events.map((event) => {
             const participants = getEventParticipants(state, event.id)
             const eventSport = state.sports.find((item) => item.id === event.sportId)
-            return <EventCard key={event.id} event={event} sport={eventSport} participantCount={event.confirmedCount ?? participants.length} participantAvatars={getParticipantAvatars(state.users, participants.map((participant) => participant.userId))} />
+            return (
+              <EventCard
+                key={event.id}
+                event={event}
+                sport={eventSport}
+                participantCount={event.confirmedCount ?? participants.length}
+                participantAvatars={getParticipantAvatars(state.users, participants.map((participant) => participant.userId))}
+                participationStatus={currentUser ? getUserParticipation(state, event.id, currentUser.id)?.status : undefined}
+              />
+            )
           })}
         </div>
       </section>
