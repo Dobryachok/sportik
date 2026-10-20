@@ -549,6 +549,21 @@ class RegisterInput(Credentials):
         return value
 
 
+class AttendanceMarkInput(BaseModel):
+    userId: str
+    attended: bool
+
+
+class AttendanceSaveInput(BaseModel):
+    marks: list[AttendanceMarkInput] = Field(default_factory=list)
+
+
+class PlayerRatingInput(BaseModel):
+    targetUserId: str
+    kind: str = Field(pattern='^(friendliness|skill)$')
+    score: int = Field(ge=1, le=100)
+
+
 async def throttle_auth(email: str, action: str, limit: int):
     key = 'auth:attempts:' + action + ':' + hashlib.sha256(email.encode()).hexdigest()
     try:
@@ -2247,21 +2262,6 @@ async def leave_event(event_id: str, user=Depends(require_user), session: AsyncS
     await restart_redis_cache()
     if activity:
         await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})
-
-
-class AttendanceMarkInput(BaseModel):
-    userId: str
-    attended: bool
-
-
-class AttendanceSaveInput(BaseModel):
-    marks: list[AttendanceMarkInput] = Field(default_factory=list)
-
-
-class PlayerRatingInput(BaseModel):
-    targetUserId: str
-    kind: str = Field(pattern='^(friendliness|skill)$')
-    score: int = Field(ge=1, le=100)
 
 
 class CommentInput(BaseModel):
