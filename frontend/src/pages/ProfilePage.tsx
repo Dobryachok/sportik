@@ -62,15 +62,25 @@ export function ProfilePage() {
   const [followLoading, setFollowLoading] = useState(false)
   const [teamInvites, setTeamInvites] = useState<TeamEmailInvite[]>([])
 
-  const loadMemberships = () => {
-    void fetchProfileMemberships()
-      .then(setMemberships)
-      .catch(() => setMemberships({ teams: [], groups: [] }))
+  const loadTeamsSection = () => {
+    void Promise.all([fetchProfileMemberships(), fetchTeamEmailInvites()])
+      .then(([membershipData, invites]) => {
+        setMemberships(membershipData)
+        const memberTeamIds = new Set(
+          membershipData.teams
+            .filter((team) => team.membershipStatus !== 'pending')
+            .map((team) => team.id),
+        )
+        setTeamInvites(invites.filter((invite) => !memberTeamIds.has(invite.teamId)))
+      })
+      .catch(() => {
+        setMemberships({ teams: [], groups: [] })
+        setTeamInvites([])
+      })
   }
 
   useEffect(() => {
-    loadMemberships()
-    void fetchTeamEmailInvites().then(setTeamInvites).catch(() => setTeamInvites([]))
+    loadTeamsSection()
   }, [])
 
   const openFollowers = () => {
@@ -410,7 +420,7 @@ export function ProfilePage() {
                           void acceptTeamEmailInvite(invite.inviteId)
                             .then(() => {
                               setTeamInvites((items) => items.filter((item) => item.inviteId !== invite.inviteId))
-                              loadMemberships()
+                              loadTeamsSection()
                             })
                             .catch(() => undefined)
                         }}

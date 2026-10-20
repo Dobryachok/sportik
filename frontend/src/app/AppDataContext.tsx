@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { addComment, completeStartQuest as completeStartRequest, createEvent, dismissNotification as dismissNotificationRequest, fetchComments, fetchMe, fetchState, joinEvent, leaveEvent, login as loginRequest, logout as logoutRequest, register as registerRequest, reviewParticipation, toggleFavorite, toggleLike, updateEvent, updateProfile, uploadAvatar } from '../data/api'
+import { addComment, completeStartQuest as completeStartRequest, createEvent, dismissNotification as dismissNotificationRequest, fetchComments, fetchEvent, fetchMe, fetchState, joinEvent, leaveEvent, login as loginRequest, logout as logoutRequest, register as registerRequest, reviewParticipation, toggleFavorite, toggleLike, updateEvent, updateProfile, uploadAvatar } from '../data/api'
 import type { CreateEventInput } from '../data/selectors'
-import type { AppState, Comment, User } from '../data/types'
+import type { AppState, Comment, Event, User } from '../data/types'
 
 interface AppDataContextValue {
   state: AppState; currentUser: User | null; loading: boolean; error: string | null; city: string
@@ -88,6 +88,41 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return false
     }
   }, [refreshComments])
+  const upsertEvents = useCallback((incoming: Event[]) => {
+    if (!incoming.length) return
+    setState((old) => {
+      if (!old) return old
+      const byId = new Map(old.events.map((event) => [event.id, event]))
+      for (const event of incoming) byId.set(event.id, event)
+      return { ...old, events: [...byId.values()] }
+    })
+  }, [])
+  const favorite = useCallback(async (eventId: string) => {
+    try {
+      setError(null)
+      const { active } = await toggleFavorite(eventId)
+      setState((old) => {
+        if (!old) return old
+        const favorites = active
+          ? (old.favorites.includes(eventId) ? old.favorites : [...old.favorites, eventId])
+          : old.favorites.filter((id) => id !== eventId)
+        return { ...old, favorites }
+      })
+      if (active) {
+        try {
+          const event = await fetchEvent(eventId)
+          upsertEvents([event])
+        } catch {
+          /* event card will load it on «Избранные» */
+        }
+      }
+      void refresh()
+      return true
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось обновить избранное.')
+      return false
+    }
+  }, [refresh, upsertEvents])
   const dismissNotification = useCallback(async (notificationId: string) => {
     try {
       setError(null)
@@ -99,7 +134,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return false
     }
   }, [])
-  const value = useMemo<AppDataContextValue | null>(() => state ? ({ state, currentUser, loading, error, city, refresh, setCity, signIn, signUp, signOut, saveProfile, completeStart, changeAvatar, favorite: (id) => runMutation(() => toggleFavorite(id)), like: (id) => runMutation(() => toggleLike(id)), participate: (id) => runMutation(() => joinEvent(id)), leave: (id) => runMutation(() => leaveEvent(id)), postComment, refreshComments, mergeComment, dismissNotification, review: (id, decision) => runMutation(() => reviewParticipation(id, decision)), addNewEvent: (input) => runMutation(() => createEvent(input)), editEvent: (id, input) => runMutation(() => updateEvent(id, input)) }) : null, [state, currentUser, loading, error, city, refresh, setCity, signIn, signUp, signOut, saveProfile, completeStart, changeAvatar, runMutation, postComment, refreshComments, mergeComment, dismissNotification])
+  const value = useMemo<AppDataContextValue | null>(() => state ? ({ state, currentUser, loading, error, city, refresh, setCity, signIn, signUp, signOut, saveProfile, completeStart, changeAvatar, favorite, like: (id) => runMutation(() => toggleLike(id)), participate: (id) => runMutation(() => joinEvent(id)), leave: (id) => runMutation(() => leaveEvent(id)), postComment, refreshComments, mergeComment, dismissNotification, review: (id, decision) => runMutation(() => reviewParticipation(id, decision)), addNewEvent: (input) => runMutation(() => createEvent(input)), editEvent: (id, input) => runMutation(() => updateEvent(id, input)) }) : null, [state, currentUser, loading, error, city, refresh, setCity, signIn, signUp, signOut, saveProfile, completeStart, changeAvatar, favorite, runMutation, postComment, refreshComments, mergeComment, dismissNotification])
   if (!value) return <div className="flex min-h-[100dvh] items-center justify-center bg-bg px-4 text-center text-sm text-muted"><div><p>{error ?? 'Загружаем события…'}</p>{error && <button type="button" onClick={() => void refresh()} className="mt-3 text-accent">Повторить</button>}</div></div>
   return <AppDataContext.Provider value={value}>{error && <div role="alert" className="fixed inset-x-4 top-4 z-[60] mx-auto max-w-md rounded-xl bg-warning px-4 py-3 text-center text-sm text-bg shadow-lg">{error}</div>}{children}</AppDataContext.Provider>
 }

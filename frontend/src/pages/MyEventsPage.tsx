@@ -1,5 +1,7 @@
 import { CalendarDays } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Event } from '../data/types'
+import { fetchEvent } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
 import { EventCard, getParticipantAvatars } from '../components/EventCard'
 import { FilterChips } from '../components/FilterChips'
@@ -16,7 +18,48 @@ const tabs = [
 export function MyEventsPage() {
   const { state, currentUser } = useAppData()
   const [tab, setTab] = useState('upcoming')
+  const [extraEvents, setExtraEvents] = useState<Record<string, Event>>({})
+  const favoriteLoadAttempted = useRef(new Set<string>())
   const userId = currentUser?.id
+  const favoriteIds = state.favorites ?? []
+  const favoriteIdsKey = favoriteIds.join(',')
+
+  useEffect(() => {
+    favoriteLoadAttempted.current = new Set()
+  }, [favoriteIdsKey])
+
+  useEffect(() => {
+    if (tab !== 'favorites' || !userId) {
+      setExtraEvents({})
+      return
+    }
+    const known = new Set(state.events.map((event) => event.id))
+    const missing = favoriteIds.filter((id) => !known.has(id) && !favoriteLoadAttempted.current.has(id))
+    if (!missing.length) return
+    for (const id of missing) favoriteLoadAttempted.current.add(id)
+    let cancelled = false
+    void Promise.all(
+      missing.map(async (id) => {
+        try {
+          return await fetchEvent(id)
+        } catch {
+          return null
+        }
+      }),
+    ).then((loaded) => {
+      if (cancelled) return
+      const next: Record<string, Event> = {}
+      for (const event of loaded) {
+        if (event?.id) next[event.id] = event
+      }
+      if (Object.keys(next).length) {
+        setExtraEvents((prev) => ({ ...prev, ...next }))
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [tab, userId, favoriteIdsKey, state.events, favoriteIds])
 
   const myEventIds = useMemo(() => {
     if (!userId) return new Set<string>()
@@ -30,16 +73,24 @@ export function MyEventsPage() {
   }, [state, userId])
 
   const events = useMemo(() => {
-    let list = state.events.filter((event) => event.status === 'published')
+    const publishedById = new Map(
+      [...state.events, ...Object.values(extraEvents)]
+        .filter((event) => event.status === 'published')
+        .map((event) => [event.id, event]),
+    )
+    let list = [...publishedById.values()]
     if (tab === 'favorites') {
-      list = list.filter((event) => state.favorites.includes(event.id))
+      list = favoriteIds
+        .map((id) => publishedById.get(id))
+        .filter((event): event is NonNullable<typeof event> => Boolean(event))
     } else if (tab === 'past') {
       list = list.filter((event) => myEventIds.has(event.id) && isPast(event.startsAt))
     } else {
       list = list.filter((event) => myEventIds.has(event.id) && !isPast(event.startsAt))
     }
+    if (tab === 'favorites') return list
     return list.sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
-  }, [state, tab, myEventIds])
+  }, [state, tab, myEventIds, favoriteIds, extraEvents])
 
   const emptyCopy = tab === 'favorites'
     ? 'Добавляйте интересные события в избранное — они появятся здесь.'

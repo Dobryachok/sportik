@@ -271,7 +271,10 @@ def register(app):
 
     @router.get('/profile/team-invites')
     async def team_invites(user=Depends(require_user), session: AsyncSession = Depends(db_session)):
-        return await service.list_pending_team_invites(session, user['db_id'])
+        await session.commit()
+        async with session.begin():
+            result = await service.list_pending_team_invites(session, user['db_id'])
+        return result
 
     @router.post('/teams/invites/{invite_id}/accept')
     @router.post('/team-invitations/{invite_id}/accept')

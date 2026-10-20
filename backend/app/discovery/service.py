@@ -616,6 +616,7 @@ async def accept_join_request(
         ),
         {'team': team_id, 'user': req['user_id']},
     )
+    await _close_team_invites_for_existing_member(session, int(req['user_id']), team_id)
     team_name = await session.scalar(text('SELECT name FROM teams WHERE id = :id'), {'id': team_id})
     await notify(session, int(req['user_id']), team_id, team_public_id, team_name or '', accepted=True)
     return {'status': 'ACCEPTED'}
@@ -946,7 +947,33 @@ async def attach_pending_team_invites(session: AsyncSession, user_id: int, email
         )
 
 
+async def _close_team_invites_for_existing_member(session: AsyncSession, user_id: int, team_id: int | None = None) -> None:
+    """Mark pending email invites as accepted when the user already belongs to the team."""
+    team_filter = 'AND i.team_id = :team' if team_id is not None else ''
+    params: dict = {'user': user_id}
+    if team_id is not None:
+        params['team'] = team_id
+    await session.execute(
+        text(
+            f'''UPDATE team_email_invites i
+               SET status = 'ACCEPTED', invitee_user_id = :user, responded_at = now()
+               WHERE i.status = 'PENDING'
+                 {team_filter}
+                 AND EXISTS (
+                   SELECT 1 FROM team_members tm
+                   WHERE tm.team_id = i.team_id AND tm.user_id = :user
+                 )
+                 AND (
+                   i.invitee_user_id = :user
+                   OR lower(i.email) = (SELECT lower(email) FROM users WHERE id = :user)
+                 )'''
+        ),
+        params,
+    )
+
+
 async def list_pending_team_invites(session: AsyncSession, user_id: int) -> list[dict]:
+    await _close_team_invites_for_existing_member(session, user_id)
     rows_out = await _rows(
         session,
         '''SELECT i.id AS "inviteId", t.public_id AS "teamId", t.name AS "teamName", t.logo_url AS "logoUrl",
@@ -955,6 +982,10 @@ async def list_pending_team_invites(session: AsyncSession, user_id: int) -> list
            JOIN teams t ON t.id = i.team_id
            JOIN users u ON u.id = i.invited_by
            WHERE i.invitee_user_id = :user AND i.status = 'PENDING'
+             AND NOT EXISTS (
+               SELECT 1 FROM team_members tm
+               WHERE tm.team_id = i.team_id AND tm.user_id = :user
+             )
            ORDER BY i.created_at DESC''',
         {'user': user_id},
     )

@@ -1039,6 +1039,11 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
                 by_id[event['id']] = event
         events = sorted(by_id.values(), key=lambda item: (item['startsAt'], item['id']))
     event_ids = [e['id'] for e in events]
+    if not event_ids and user and favorites:
+        for event in await event_rows_by_public_ids(session, favorites):
+            by_id[event['id']] = event
+        events = sorted(by_id.values(), key=lambda item: (item['startsAt'], item['id']))
+        event_ids = [e['id'] for e in events]
     if not event_ids:
         notifications = await notification_rows(session, user['db_id']) if user else []
         sports = await approved_sports_catalog(session, [])
