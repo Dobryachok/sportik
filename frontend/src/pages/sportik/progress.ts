@@ -1,18 +1,20 @@
 import type { AppState } from '../../data/types'
 import { isPast } from '../../lib/format'
 
+import { stageModelUrl } from './models'
+
 export type SportikStage = 'default' | 'medium' | 'hight'
 
 export const STAGE_MODELS: Record<SportikStage, string> = {
-  default: '/models/default.glb',
-  medium: '/models/medium.glb',
-  hight: '/models/hight.glb',
+  default: stageModelUrl('default'),
+  medium: stageModelUrl('medium'),
+  hight: stageModelUrl('hight'),
 }
 
 export const STAGE_LABELS: Record<SportikStage, string> = {
-  default: 'Обычный',
-  medium: 'Средний',
-  hight: 'Высокий',
+  default: 'Новичок',
+  medium: 'Атлет',
+  hight: 'Титан',
 }
 
 export function countVisits(state: AppState, userId: string): number {

@@ -8,17 +8,35 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { useTheme } from '../app/ThemeContext'
 import {
+  allModelUrls,
+  findOwnedItem,
+  LOOT_CASES,
+  resolveDisplayModelUrl,
+  SHOP_ITEMS,
+  stageMeetsRequirement,
+  type ShopCategory,
+  rollCaseLoot,
+} from './sportik/catalog'
+import {
   readClosedChallenges,
   sportikChallenges,
   type SportikChallenge,
 } from './sportik/challenges'
+import {
+  availableBalance,
+  readEquippedId,
+  readOwnedIds,
+  readSpentPoints,
+  writeEquippedId,
+  writeOwnedIds,
+  writeSpentPoints,
+} from './sportik/loadout'
 import {
   countVisits,
   nextProgress,
   progressPoints,
   resolveStage,
   STAGE_LABELS,
-  STAGE_MODELS,
   type SportikStage,
 } from './sportik/progress'
 
@@ -60,7 +78,14 @@ const menuCards = [
   },
 ] as const
 
-type PanelView = 'home' | 'challenges' | 'challenge-detail' | 'shop'
+type PanelView = 'home' | 'challenges' | 'challenge-detail' | 'shop' | 'customize'
+
+const shopTabs: { id: ShopCategory | 'case'; label: string }[] = [
+  { id: 'outfit', label: 'Стрит' },
+  { id: 'sport', label: 'Спорт' },
+  { id: 'champion', label: 'Чемпион' },
+  { id: 'case', label: 'Кейсы' },
+]
 
 export function SportikPage() {
   const { currentUser, state } = useAppData()
@@ -73,6 +98,10 @@ export function SportikPage() {
   const [panel, setPanel] = useState<PanelView>('home')
   const [selectedChallengeId, setSelectedChallengeId] = useState<string | null>(null)
   const [closedIds, setClosedIds] = useState<string[]>([])
+  const [ownedIds, setOwnedIds] = useState<string[]>([])
+  const [equippedId, setEquippedId] = useState<string | null>(null)
+  const [shopTab, setShopTab] = useState<ShopCategory | 'case'>('outfit')
+  const [shopMessage, setShopMessage] = useState('')
   const shopUnlocked = Boolean(currentUser?.startCompleted)
   const wasShopUnlocked = useRef(shopUnlocked)
 
@@ -83,6 +112,8 @@ export function SportikPage() {
   useEffect(() => {
     if (!currentUser) return
     setClosedIds(readClosedChallenges(currentUser.id))
+    setOwnedIds(readOwnedIds(currentUser.id))
+    setEquippedId(readEquippedId(currentUser.id))
     try {
       const seen = localStorage.getItem(hintsStorageKey(currentUser.id))
       if (!seen && searchParams.get('shop') !== '1') setHintStep(0)
@@ -107,7 +138,64 @@ export function SportikPage() {
   const stage = resolveStage(visits, closedCount)
   const goal = nextProgress(closedCount, stage)
   const visitRatio = Math.min(1, visits / goal.visitTarget)
-  const modelUrl = STAGE_MODELS[stage]
+  const modelUrl = resolveDisplayModelUrl(stage, equippedId)
+  const balance = currentUser ? availableBalance(points, currentUser.id) : 0
+
+  const persistOwned = (ids: string[]) => {
+    if (!currentUser) return
+    writeOwnedIds(currentUser.id, ids)
+    setOwnedIds(ids)
+  }
+
+  const spendPoints = (amount: number) => {
+    if (!currentUser) return false
+    if (amount <= 0) return true
+    const nextSpent = readSpentPoints(currentUser.id) + amount
+    if (points < nextSpent) return false
+    writeSpentPoints(currentUser.id, nextSpent)
+    return true
+  }
+
+  const purchaseItem = (itemId: string) => {
+    if (!currentUser) return
+    const item = SHOP_ITEMS.find((entry) => entry.id === itemId)
+    if (!item) return
+    if (ownedIds.includes(item.id)) {
+      setShopMessage('Предмет уже в коллекции.')
+      return
+    }
+    if (!stageMeetsRequirement(stage, item.minStage)) {
+      setShopMessage(`Нужен уровень «${item.minStage ? STAGE_LABELS[item.minStage] : 'Новичок'}».`)
+      return
+    }
+    if (item.price > 0 && !spendPoints(item.price)) {
+      setShopMessage('Не хватает очков активности.')
+      return
+    }
+    persistOwned([...ownedIds, item.id])
+    setShopMessage(`«${item.title}» добавлен в коллекцию.`)
+  }
+
+  const openCase = (caseId: string) => {
+    if (!currentUser) return
+    const crate = LOOT_CASES.find((entry) => entry.id === caseId)
+    if (!crate) return
+    if (!spendPoints(crate.price)) {
+      setShopMessage('Не хватает очков для кейса.')
+      return
+    }
+    const loot = rollCaseLoot(crate)
+    const nextOwned = ownedIds.includes(loot.id) ? ownedIds : [...ownedIds, loot.id]
+    persistOwned(nextOwned)
+    setShopMessage(`Выпало: «${loot.title}» (${loot.rarity}).`)
+  }
+
+  const equipItem = (itemId: string | null) => {
+    if (!currentUser) return
+    writeEquippedId(currentUser.id, itemId)
+    setEquippedId(itemId)
+    setShopMessage(itemId ? 'Облик обновлён.' : 'Показана форма по уровню прогрессии.')
+  }
   const selectedChallenge = sportikChallenges.find((item) => item.id === selectedChallengeId) ?? null
 
   const markHintsSeen = () => {
@@ -237,7 +325,16 @@ export function SportikPage() {
                             navigate('/tamagotchi')
                             return
                           }
+                          setShopMessage('')
                           setPanel('shop')
+                        }
+                        if (card.id === 'customize') {
+                          if (shopLocked) {
+                            navigate('/tamagotchi')
+                            return
+                          }
+                          setShopMessage('')
+                          setPanel('customize')
                         }
                       }}
                       className={`flex min-h-[6.5rem] flex-col items-center justify-center gap-2 rounded-2xl border px-2 py-3 text-center transition-colors ${
@@ -261,7 +358,27 @@ export function SportikPage() {
                 })}
               </div>
             )}
-            {panel === 'shop' && <ShopPanel />}
+            {panel === 'shop' && (
+              <ShopPanel
+                balance={balance}
+                stage={stage}
+                ownedIds={ownedIds}
+                shopTab={shopTab}
+                message={shopMessage}
+                onTab={setShopTab}
+                onBuy={purchaseItem}
+                onOpenCase={openCase}
+                onEquip={equipItem}
+              />
+            )}
+            {panel === 'customize' && (
+              <CustomizePanel
+                stage={stage}
+                ownedIds={ownedIds}
+                equippedId={equippedId}
+                onEquip={equipItem}
+              />
+            )}
             {panel === 'challenges' && (
               <ChallengeList
                 closedIds={closedIds}
@@ -327,19 +444,165 @@ export function SportikPage() {
   )
 }
 
-function ShopPanel() {
+function ShopPanel({
+  balance,
+  stage,
+  ownedIds,
+  shopTab,
+  message,
+  onTab,
+  onBuy,
+  onOpenCase,
+  onEquip,
+}: {
+  balance: number
+  stage: SportikStage
+  ownedIds: string[]
+  shopTab: ShopCategory | 'case'
+  message: string
+  onTab: (tab: ShopCategory | 'case') => void
+  onBuy: (id: string) => void
+  onOpenCase: (id: string) => void
+  onEquip: (id: string | null) => void
+}) {
+  const items = shopTab === 'case'
+    ? []
+    : SHOP_ITEMS.filter((item) => item.category === shopTab)
+
   return (
-    <div className="space-y-3 px-1 pb-1">
-      <p className="text-sm font-semibold text-white">Магазин Спортика</p>
-      <p className="text-sm leading-5 text-muted">Скины и вещи для персонажа. Новые позиции появятся по мере роста Спортика.</p>
-      <div className="grid grid-cols-2 gap-2">
-        {['Стартовый набор', 'Лента прогресса'].map((title) => (
-          <div key={title} className="rounded-2xl border border-white/10 bg-card-elevated px-3 py-4">
-            <p className="text-sm font-semibold text-white">{title}</p>
-            <p className="mt-1 text-[11px] text-muted">Скоро</p>
-          </div>
+    <div className="max-h-[min(22rem,50vh)] space-y-3 overflow-y-auto px-1 pb-1">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-white">Магазин</p>
+        <p className="rounded-full bg-accent/15 px-2.5 py-1 text-[11px] font-bold text-accent">{balance} очков</p>
+      </div>
+      <p className="text-xs leading-5 text-muted">
+        Очки за посещения и челленжи. Чемпионские скины — с уровня «Титан». Токены за 1–3 место на турнирах подключим отдельно.
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {shopTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onTab(tab.id)}
+            className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors ${
+              shopTab === tab.id ? 'bg-accent text-white' : 'bg-white/8 text-muted hover:text-white'
+            }`}
+          >
+            {tab.label}
+          </button>
         ))}
       </div>
+      {message && <p className="rounded-xl border border-accent/25 bg-accent/10 px-3 py-2 text-xs text-accent">{message}</p>}
+      {shopTab === 'case' ? (
+        <div className="space-y-2">
+          {LOOT_CASES.map((crate) => (
+            <div key={crate.id} className="rounded-2xl border border-white/10 bg-card-elevated p-3">
+              <p className="text-sm font-semibold text-white">{crate.title}</p>
+              <p className="mt-1 text-[11px] leading-4 text-muted">{crate.description}</p>
+              <button
+                type="button"
+                onClick={() => onOpenCase(crate.id)}
+                className="mt-3 w-full rounded-xl bg-accent py-2.5 text-xs font-bold text-white hover:bg-accent-hover"
+              >
+                Открыть за {crate.price} очков
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {items.map((item) => {
+            const owned = ownedIds.includes(item.id)
+            const locked = !stageMeetsRequirement(stage, item.minStage)
+            return (
+              <div key={item.id} className="rounded-2xl border border-white/10 bg-card-elevated p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm font-semibold text-white">{item.title}</p>
+                  {item.badge && <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold text-muted">{item.badge}</span>}
+                </div>
+                <p className="mt-1 text-[11px] leading-4 text-muted">{item.description}</p>
+                <p className="mt-2 text-xs font-semibold text-accent">{item.price === 0 ? 'Бесплатно' : `${item.price} очков`}</p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={owned || locked}
+                    onClick={() => onBuy(item.id)}
+                    className="flex-1 rounded-xl border border-white/10 py-2 text-[11px] font-bold text-white disabled:opacity-40"
+                  >
+                    {owned ? 'Куплено' : locked ? 'Закрыто' : 'Купить'}
+                  </button>
+                  {owned && (
+                    <button
+                      type="button"
+                      onClick={() => onEquip(item.id)}
+                      className="flex-1 rounded-xl bg-accent/20 py-2 text-[11px] font-bold text-accent"
+                    >
+                      Надеть
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CustomizePanel({
+  stage,
+  ownedIds,
+  equippedId,
+  onEquip,
+}: {
+  stage: SportikStage
+  ownedIds: string[]
+  equippedId: string | null
+  onEquip: (id: string | null) => void
+}) {
+  const ownedItems = ownedIds
+    .map((id) => findOwnedItem(id))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+
+  return (
+    <div className="max-h-[min(22rem,50vh)] space-y-3 overflow-y-auto px-1 pb-1">
+      <p className="text-sm font-semibold text-white">Кастомизация</p>
+      <p className="text-xs leading-5 text-muted">
+        Базовая форма по уровню: <span className="font-semibold text-white">{STAGE_LABELS[stage]}</span>. Наденьте купленный скин или вернитесь к прогрессии.
+      </p>
+      <button
+        type="button"
+        onClick={() => onEquip(null)}
+        className={`w-full rounded-2xl border px-3 py-3 text-left text-sm ${
+          equippedId === null ? 'border-accent/50 bg-accent/10 text-white' : 'border-white/10 bg-card-elevated text-muted'
+        }`}
+      >
+        <span className="font-semibold">Форма уровня</span>
+        <span className="mt-0.5 block text-[11px]">Модель «{STAGE_LABELS[stage]}»</span>
+      </button>
+      {ownedItems.length === 0 ? (
+        <p className="text-xs text-muted">Купите облик в магазине или откройте кейс.</p>
+      ) : (
+        <div className="space-y-2">
+          {ownedItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onEquip(item.id)}
+              className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-3 py-3 text-left ${
+                equippedId === item.id ? 'border-accent/50 bg-accent/10' : 'border-white/10 bg-card-elevated'
+              }`}
+            >
+              <span>
+                <span className="block text-sm font-semibold text-white">{item.title}</span>
+                <span className="block text-[11px] text-muted">{'badge' in item && item.badge ? item.badge : 'Коллекция'}</span>
+              </span>
+              {equippedId === item.id && <span className="text-[11px] font-bold text-accent">Надето</span>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -404,6 +667,6 @@ function ChallengeDetail({
   )
 }
 
-;(Object.keys(STAGE_MODELS) as SportikStage[]).forEach((stage) => {
-  useGLTF.preload(STAGE_MODELS[stage])
+allModelUrls().forEach((url) => {
+  useGLTF.preload(url)
 })
