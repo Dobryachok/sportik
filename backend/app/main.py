@@ -463,6 +463,74 @@ class Credentials(BaseModel):
         return value.strip() if value else value
 
 
+class SocialLinkInput(BaseModel):
+    platform: str = Field(min_length=1, max_length=40)
+    url: str = Field(min_length=8, max_length=500)
+    label: str | None = Field(default=None, max_length=80)
+
+    @field_validator('platform', 'label')
+    @classmethod
+    def clean_text(cls, value):
+        return value.strip() if value is not None else value
+
+    @field_validator('url')
+    @classmethod
+    def valid_link(cls, value):
+        parsed = urlsplit(value.strip())
+        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
+            raise ValueError('Social link must be an http(s) URL')
+        return value.strip()
+
+
+class OrganizationApplicationInput(BaseModel):
+    name: str = Field(min_length=2, max_length=255)
+    description: str = Field(default='', max_length=10000)
+    city: str = Field(min_length=1, max_length=150)
+    address: str | None = Field(default=None, max_length=500)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=50)
+    website: str | None = Field(default=None, max_length=500)
+    socialLinks: list[SocialLinkInput] | None = Field(default=None, max_length=5)
+    comment: str = Field(default='', max_length=4000)
+
+    @field_validator('name', 'city', 'description', 'phone', 'website', 'comment', 'address')
+    @classmethod
+    def clean_organization_text(cls, value):
+        return value.strip() if value is not None else value
+
+    @field_validator('website')
+    @classmethod
+    def organization_website(cls, value):
+        if not value:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
+            raise ValueError('Website must be an http(s) URL')
+        return value
+
+    @field_validator('latitude', 'longitude', mode='before')
+    @classmethod
+    def empty_coords_to_none(cls, value):
+        return None if value == '' else value
+
+
+class RegisterInput(Credentials):
+    accountType: str = Field(default='user', pattern='^(user|organization)$')
+    organization: OrganizationApplicationInput | None = None
+
+    @field_validator('organization')
+    @classmethod
+    def organization_only_for_org_account(cls, value, info):
+        account_type = info.data.get('accountType', 'user')
+        if account_type == 'organization' and value is None:
+            raise ValueError('Organization details are required')
+        if account_type != 'organization':
+            return None
+        return value
+
+
 async def throttle_auth(email: str, action: str, limit: int):
     key = 'auth:attempts:' + action + ':' + hashlib.sha256(email.encode()).hexdigest()
     try:
@@ -580,74 +648,6 @@ async def me(request: Request, session: AsyncSession = Depends(db_session)):
         if exc.status_code == 401:
             return None
         raise
-
-
-class SocialLinkInput(BaseModel):
-    platform: str = Field(min_length=1, max_length=40)
-    url: str = Field(min_length=8, max_length=500)
-    label: str | None = Field(default=None, max_length=80)
-
-    @field_validator('platform', 'label')
-    @classmethod
-    def clean_text(cls, value):
-        return value.strip() if value is not None else value
-
-    @field_validator('url')
-    @classmethod
-    def valid_link(cls, value):
-        parsed = urlsplit(value.strip())
-        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
-            raise ValueError('Social link must be an http(s) URL')
-        return value.strip()
-
-
-class OrganizationApplicationInput(BaseModel):
-    name: str = Field(min_length=2, max_length=255)
-    description: str = Field(default='', max_length=10000)
-    city: str = Field(min_length=1, max_length=150)
-    address: str | None = Field(default=None, max_length=500)
-    latitude: float | None = Field(default=None, ge=-90, le=90)
-    longitude: float | None = Field(default=None, ge=-180, le=180)
-    email: EmailStr | None = None
-    phone: str | None = Field(default=None, max_length=50)
-    website: str | None = Field(default=None, max_length=500)
-    socialLinks: list[SocialLinkInput] | None = Field(default=None, max_length=5)
-    comment: str = Field(default='', max_length=4000)
-
-    @field_validator('name', 'city', 'description', 'phone', 'website', 'comment', 'address')
-    @classmethod
-    def clean_organization_text(cls, value):
-        return value.strip() if value is not None else value
-
-    @field_validator('website')
-    @classmethod
-    def organization_website(cls, value):
-        if not value:
-            return value
-        parsed = urlsplit(value)
-        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
-            raise ValueError('Website must be an http(s) URL')
-        return value
-
-    @field_validator('latitude', 'longitude', mode='before')
-    @classmethod
-    def empty_coords_to_none(cls, value):
-        return None if value == '' else value
-
-
-class RegisterInput(Credentials):
-    accountType: str = Field(default='user', pattern='^(user|organization)$')
-    organization: OrganizationApplicationInput | None = None
-
-    @field_validator('organization')
-    @classmethod
-    def organization_only_for_org_account(cls, value, info):
-        account_type = info.data.get('accountType', 'user')
-        if account_type == 'organization' and value is None:
-            raise ValueError('Organization details are required')
-        if account_type != 'organization':
-            return None
-        return value
 
 
 class ProfileInput(BaseModel):
