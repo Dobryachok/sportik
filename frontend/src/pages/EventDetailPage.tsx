@@ -13,6 +13,7 @@ import { fetchEvent, fetchEventParticipants, moderateEvent } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
 import { EventJoinPanel } from '../components/EventJoinPanel'
 import { EventAttendancePanel } from '../components/EventAttendancePanel'
+import { EventPlayerRatingsPanel } from '../components/EventPlayerRatingsPanel'
 import { EventOrganizerCard } from '../components/EventOrganizerCard'
 import { MobileActionBar } from '../components/MobileActionBar'
 import { PrimaryButton } from '../components/PrimaryButton'
@@ -80,6 +81,9 @@ export function EventDetailPage() {
     ? `https://yandex.ru/maps/?pt=${event.longitude},${event.latitude}&z=16&l=map`
     : `https://yandex.ru/maps/?text=${encodeURIComponent([event.city, event.address].filter(Boolean).join(', '))}`
   const eventPast = isPast(event.startsAt)
+  const canRatePlayers = Boolean(
+    currentUser && eventPast && (isOrganizer || myPart?.status === 'confirmed'),
+  )
   const canJoin = !unpublished && !eventPast && (!myPart || myPart.status === 'rejected' || myPart.status === 'cancelled')
   const showMobileCta =
     (!eventPast && (canJoin || myPart?.status === 'pending' || myPart?.status === 'waitlist'))
@@ -303,7 +307,15 @@ export function EventDetailPage() {
           </button>
         </div>
 
-        {participantProfiles.length > 0 && (
+        {canRatePlayers && (
+          <EventPlayerRatingsPanel
+            eventId={event.id}
+            startsAt={event.startsAt}
+            joinMode={event.joinMode}
+          />
+        )}
+
+        {participantProfiles.length > 0 && !canRatePlayers && (
           <section className="mt-6"><h2 className="text-xl font-bold tracking-[-0.025em]">Участники</h2><div className="mt-3 grid gap-2 sm:grid-cols-2">
             {participantProfiles.map((participant) => <Link key={participant.id} to={`/users/${participant.id}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.08] bg-card p-3 transition-colors hover:border-accent/50"><img src={participant.avatarUrl || '/images/hero.png'} alt="" className="h-10 w-10 shrink-0 rounded-full object-cover" /><span className="min-w-0"><span className="block truncate font-semibold text-white">{participant.name}</span><span className="block truncate text-xs text-muted">{participant.city || 'Город не указан'}</span></span></Link>)}
           </div></section>

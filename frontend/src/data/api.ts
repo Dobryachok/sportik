@@ -208,6 +208,40 @@ export const saveEventAttendance = (eventId: string, marks: Array<{ userId: stri
     method: 'PUT',
     body: JSON.stringify({ marks }),
   })
+
+export type EventPlayerRatingRow = {
+  userId: string
+  name: string
+  avatarUrl?: string
+  city: string
+  avgFriendliness: number | null
+  myFriendliness: number | null
+  skillScore: number | null
+  skillStars: number | null
+  canRateFriendliness: boolean
+  canRateSkill: boolean
+}
+
+export type EventPlayerRatingsResponse = {
+  startsAt: string
+  deadlineAt: string
+  windowOpen: boolean
+  joinMode: 'open' | 'application'
+  canView: boolean
+  rows: EventPlayerRatingRow[]
+}
+
+export const fetchEventPlayerRatings = (eventId: string) =>
+  request<EventPlayerRatingsResponse>(`/events/${encodeURIComponent(eventId)}/player-ratings`)
+
+export const saveEventPlayerRating = (
+  eventId: string,
+  input: { targetUserId: string; kind: 'friendliness' | 'skill'; score: number },
+) =>
+  request<EventPlayerRatingsResponse>(`/events/${encodeURIComponent(eventId)}/player-ratings`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  })
 export const fetchComments = (eventId: string) => request<Comment[]>(`/events/${encodeURIComponent(eventId)}/comments`)
 export const createEvent = (input: CreateEventInput) => request<{ id: string }>('/events', { method: 'POST', body: JSON.stringify(input) })
 export const updateEvent = (eventId: string, input: CreateEventInput) => request<{ id: string }>(`/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', body: JSON.stringify(input) })

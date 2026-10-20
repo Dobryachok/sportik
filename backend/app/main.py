@@ -33,6 +33,12 @@ from app.attendance import (
     user_reliability_column_sql,
 )
 from app.config import settings
+from app.player_ratings import (
+    build_player_ratings_payload,
+    load_rating_event,
+    player_ratings_table_exists,
+    viewer_is_confirmed_participant,
+)
 
 logger = logging.getLogger(__name__)
 engine = create_async_engine(settings.database_url, pool_pre_ping=True)
@@ -1303,6 +1309,79 @@ async def save_event_attendance(event_id: str, payload: AttendanceSaveInput, use
     return await attendance_response(session, event_row)
 
 
+async def player_ratings_response(session: AsyncSession, event_row, viewer: dict) -> dict:
+    if not await player_ratings_table_exists(session):
+        raise HTTPException(503, 'Player ratings are not available yet')
+    try:
+        payload = await build_player_ratings_payload(session, event_row, viewer)
+    except ValueError:
+        raise HTTPException(503, 'Player ratings are not available yet')
+    start_at = ensure_aware(event_row['start_at'])
+    payload['startsAt'] = timestamp(start_at)
+    payload['deadlineAt'] = timestamp(attendance_deadline(start_at))
+    return payload
+
+
+@app.get('/api/v1/events/{event_id}/player-ratings')
+async def get_player_ratings(event_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    event_row = await load_rating_event(session, event_id)
+    if not event_row:
+        raise HTTPException(404, 'Event not found')
+    payload = await player_ratings_response(session, event_row, user)
+    if not payload.get('canView'):
+        raise HTTPException(403, 'Only confirmed participants may view player ratings')
+    if not event_has_started(event_row['start_at']):
+        raise HTTPException(403, 'Ratings are available after the event starts')
+    return payload
+
+
+@app.put('/api/v1/events/{event_id}/player-ratings')
+async def save_player_rating(event_id: str, payload: PlayerRatingInput, user=Depends(require_user),
+                             session: AsyncSession = Depends(db_session)):
+    await session.commit()
+    async with session.begin():
+        event_row = await load_rating_event(session, event_id)
+        if not event_row:
+            raise HTTPException(404, 'Event not found')
+        if not await player_ratings_table_exists(session):
+            raise HTTPException(503, 'Player ratings are not available yet')
+        start_at = ensure_aware(event_row['start_at'])
+        if not event_has_started(start_at):
+            raise HTTPException(403, 'Ratings are available after the event starts')
+        if not attendance_window_open(start_at):
+            raise HTTPException(403, 'Ratings can only be set within 7 days after the event starts')
+        if payload.targetUserId == user['id']:
+            raise HTTPException(422, 'You cannot rate yourself')
+        target = (await session.execute(text('''SELECT u.id FROM users u
+            JOIN event_registrations r ON r.user_id=u.id
+            WHERE u.public_id=:target AND r.event_id=:event AND r.status='REGISTERED' LIMIT 1'''),
+                                        {'target': payload.targetUserId, 'event': event_row['id']})).scalar()
+        if target is None:
+            raise HTTPException(404, 'Participant not found on this event')
+        is_organizer = event_row['organizer_id'] == user['db_id']
+        confirmed = await viewer_is_confirmed_participant(session, event_row['id'], user['db_id'])
+        if payload.kind == 'friendliness':
+            if not confirmed:
+                raise HTTPException(403, 'Only confirmed participants may rate friendliness')
+        elif payload.kind == 'skill':
+            if not is_organizer:
+                raise HTTPException(403, 'Only the organizer may rate skill')
+            if event_row['join_mode'] != 'open':
+                raise HTTPException(403, 'Skill ratings are only available for open events')
+        else:
+            raise HTTPException(422, 'Unknown rating kind')
+        await session.execute(text('''INSERT INTO event_player_ratings
+            (event_id,target_user_id,rater_user_id,kind,score,updated_at)
+            VALUES (:event,:target,:rater,:kind,:score,now())
+            ON CONFLICT (event_id, target_user_id, rater_user_id, kind)
+            DO UPDATE SET score=EXCLUDED.score, updated_at=now()'''),
+                              {'event': event_row['id'], 'target': target, 'rater': user['db_id'],
+                               'kind': payload.kind, 'score': payload.score})
+    await restart_redis_cache()
+    event_row = await load_rating_event(session, event_id)
+    return await player_ratings_response(session, event_row, user)
+
+
 @app.patch('/api/v1/notifications/{notification_id}/dismiss', status_code=status.HTTP_204_NO_CONTENT)
 async def dismiss_notification(notification_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     if not notification_id.startswith('n-') or not notification_id[2:].isdigit():
@@ -2177,6 +2256,12 @@ class AttendanceMarkInput(BaseModel):
 
 class AttendanceSaveInput(BaseModel):
     marks: list[AttendanceMarkInput] = Field(default_factory=list)
+
+
+class PlayerRatingInput(BaseModel):
+    targetUserId: str
+    kind: str = Field(pattern='^(friendliness|skill)$')
+    score: int = Field(ge=1, le=100)
 
 
 class CommentInput(BaseModel):
