@@ -7,11 +7,14 @@ interface LocationPickerProps {
   address: string
   city: string
   district: string
+  latitude?: number
+  longitude?: number
   onChange: (location: { address: string; city: string; district: string; latitude?: number; longitude?: number }) => void
   required?: boolean
 }
 
-export function LocationPicker({ address, city, district, onChange, required = false }: LocationPickerProps) {
+export function LocationPicker({ address, city, district, latitude, longitude, onChange, required = false }: LocationPickerProps) {
+  const verified = latitude != null && longitude != null
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([])
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
@@ -74,7 +77,7 @@ export function LocationPicker({ address, city, district, onChange, required = f
             value={address}
             onFocus={() => suggestions.length > 0 && setOpen(true)}
             onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-            onChange={(event) => onChange({ address: event.target.value, city, district })}
+            onChange={(event) => onChange({ address: event.target.value, city, district, latitude: undefined, longitude: undefined })}
             placeholder="Начните вводить адрес"
             autoComplete="street-address"
             className="w-full rounded-xl border border-white/10 bg-bg py-3 pl-10 pr-10 text-white outline-none transition-colors focus:border-accent"
@@ -92,14 +95,16 @@ export function LocationPicker({ address, city, district, onChange, required = f
                 onClick={() => choose(item)}
                 className="w-full rounded-lg px-3 py-2.5 text-left text-sm text-white transition-colors hover:bg-white/[0.08]"
               >
-                <span className="block font-medium">{item.label}</span>
-                {(item.district || item.city) && <span className="mt-0.5 block text-xs text-muted">{[item.district, item.city].filter(Boolean).join(', ')}</span>}
+                <span className="block font-medium">{item.address}</span>
+                <span className="mt-0.5 block text-xs text-muted">{item.label}</span>
               </button>
             </li>
           ))}
         </ul>
       )}
-      <p className="mt-1.5 text-xs text-muted">Выберите подсказку, чтобы заполнить район и точку на карте.</p>
+      <p className="mt-1.5 text-xs text-muted">
+        {verified ? 'Адрес подтверждён по карте.' : 'Выберите адрес из подсказки — без этого событие не сохранится.'}
+      </p>
     </div>
   )
 }

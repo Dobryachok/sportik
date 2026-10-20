@@ -1,5 +1,8 @@
 import { MessageCircle, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { fetchProfileMemberships } from '../api/discovery'
+import { joinEventAsTeam } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
 import { PrimaryButton } from './PrimaryButton'
 import { getUserParticipation } from '../data/selectors'
@@ -15,9 +18,24 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
   const { state, currentUser, participate } = useAppData()
   const organizer = state.users.find((item) => item.id === event.organizerUserId)
   const myPart = currentUser ? getUserParticipation(state, event.id, currentUser.id) : undefined
+  const [captainTeams, setCaptainTeams] = useState<Array<{ id: string; name: string }>>([])
+  const [selectedTeamId, setSelectedTeamId] = useState('')
+  const [teamBusy, setTeamBusy] = useState(false)
+  const [teamMessage, setTeamMessage] = useState('')
+
+  useEffect(() => {
+    void fetchProfileMemberships()
+      .then((data) => {
+        const teams = data.teams.filter((team) => team.role === 'CAPTAIN' && team.membershipStatus !== 'pending')
+        setCaptainTeams(teams.map((team) => ({ id: team.id, name: team.name })))
+        setSelectedTeamId(teams[0]?.id ?? '')
+      })
+      .catch(() => setCaptainTeams([]))
+  }, [])
 
   const seatsLeft = Math.max(0, event.capacity - (event.confirmedCount ?? 0))
-  const joinLabel = myPart
+  const activeParticipation = myPart && myPart.status !== 'cancelled' && myPart.status !== 'rejected'
+  const joinLabel = activeParticipation
     ? myPart.status === 'waitlist'
       ? 'Вы в резерве'
       : myPart.status === 'pending'
@@ -33,6 +51,21 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
     if (await participate(event.id)) {
       onJoined?.()
       onClose()
+    }
+  }
+
+  const handleTeamJoin = async () => {
+    if (!selectedTeamId || teamBusy) return
+    setTeamBusy(true)
+    setTeamMessage('')
+    try {
+      const result = await joinEventAsTeam(event.id, selectedTeamId)
+      setTeamMessage(`Записано участников: ${result.registered}. В резерве: ${result.waitlisted}.`)
+      onJoined?.()
+    } catch (err) {
+      setTeamMessage(err instanceof Error ? err.message : 'Не удалось записать команду.')
+    } finally {
+      setTeamBusy(false)
     }
   }
 
@@ -71,10 +104,29 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
         <MessageCircle size={18} /> Обсудить событие в чате
       </Link>
       <div className="mt-6">
-        <PrimaryButton fullWidth onClick={() => void handleJoin()} disabled={Boolean(myPart && myPart.status !== 'cancelled' && myPart.status !== 'rejected')}>
+        <PrimaryButton fullWidth onClick={() => void handleJoin()} disabled={Boolean(activeParticipation)}>
           {joinLabel}
         </PrimaryButton>
       </div>
+      {captainTeams.length > 0 && (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-card px-4 py-3">
+          <p className="text-sm font-semibold text-white">Записать команду</p>
+          <p className="mt-1 text-xs text-muted">Доступно капитанам: все участники команды будут добавлены на событие.</p>
+          <select
+            value={selectedTeamId}
+            onChange={(item) => setSelectedTeamId(item.target.value)}
+            className="mt-3 w-full rounded-xl border border-white/10 bg-bg px-3 py-2.5 text-sm text-white"
+          >
+            {captainTeams.map((team) => (
+              <option key={team.id} value={team.id}>{team.name}</option>
+            ))}
+          </select>
+          <PrimaryButton className="mt-3" fullWidth disabled={teamBusy || !selectedTeamId} onClick={() => void handleTeamJoin()}>
+            {teamBusy ? 'Записываем…' : 'Записать команду'}
+          </PrimaryButton>
+          {teamMessage && <p className="mt-2 text-xs text-muted">{teamMessage}</p>}
+        </div>
+      )}
     </>
   )
 

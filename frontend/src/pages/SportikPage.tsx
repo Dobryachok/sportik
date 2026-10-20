@@ -243,7 +243,7 @@ export function SportikPage() {
                           : 'border-white/10 bg-card-elevated hover:border-accent/40 hover:bg-white/5'
                       }`}
                     >
-                      <span className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
+                      <span className="sportik-menu-tile-icon relative flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
                         <Icon size={20} />
                         {shopLocked && (
                           <Lock size={12} className="absolute -right-1 -top-1 rounded-full bg-card text-white" />

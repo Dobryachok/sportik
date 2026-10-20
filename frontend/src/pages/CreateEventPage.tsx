@@ -42,6 +42,7 @@ export function CreateEventPage() {
   const [level, setLevel] = useState(2)
   const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
   const [organizationId, setOrganizationId] = useState(searchParams.get('organization') ?? '')
+  const [addressError, setAddressError] = useState('')
 
   useEffect(() => {
     void refresh()
@@ -87,6 +88,11 @@ export function CreateEventPage() {
     form.preventDefault()
     const sportName = state.sports.find((sport) => sport.id === sportChoice)?.name ?? ''
     if (!title.trim() || !sportName.trim() || !address.trim() || !locationCity.trim()) return
+    if (latitude == null || longitude == null) {
+      setAddressError('Выберите существующий адрес из подсказок.')
+      return
+    }
+    setAddressError('')
     const created = await addNewEvent({
       title, description, address, district: district || undefined, city: locationCity,
       startsAt: new Date(startsAt).toISOString(), capacity, joinMode, level, sportName,
@@ -147,7 +153,10 @@ export function CreateEventPage() {
           address={address}
           city={locationCity}
           district={district}
+          latitude={latitude}
+          longitude={longitude}
           onChange={(location) => {
+            setAddressError('')
             setAddress(location.address)
             setLocationCity(location.city)
             setDistrict(location.district)
@@ -155,6 +164,7 @@ export function CreateEventPage() {
             setLongitude(location.longitude)
           }}
         />
+        {addressError && <p role="alert" className="text-sm text-warning">{addressError}</p>}
         <label className="block text-sm text-muted">Район
           <input value={district} onChange={(event) => setDistrict(event.target.value)} placeholder="Заполнится после выбора адреса" className="mt-1 w-full rounded-xl bg-card px-3 py-2 text-white outline-none focus:ring-1 focus:ring-accent" />
         </label>

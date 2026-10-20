@@ -106,7 +106,7 @@ export function EventDetailPage() {
   return (
     <div className="page-frame pb-action-bar-only">
       <div>
-        <div className="relative min-h-72 overflow-hidden rounded-[1.55rem] border border-white/[0.09] bg-card shadow-[0_18px_38px_rgba(0,0,0,0.2)] md:min-h-[24rem]">
+        <div className="event-hero-surface relative min-h-72 overflow-hidden rounded-[1.55rem] border border-white/[0.09] bg-card shadow-[0_18px_38px_rgba(0,0,0,0.2)] md:min-h-[24rem]">
           <img
             src={event.imageUrl ?? '/images/hero.png'}
             alt=""
@@ -266,7 +266,9 @@ export function EventDetailPage() {
           {!unpublished && myPart?.status === 'waitlist' && (
             <PrimaryButton fullWidth disabled className="hidden md:flex">Вы в резерве</PrimaryButton>
           )}
-          {!unpublished && myPart?.status === 'confirmed' && <PrimaryButton variant="outline" fullWidth onClick={() => void leaveConfirmedEvent()}>Покинуть событие</PrimaryButton>}
+          {!unpublished && myPart && (myPart.status === 'confirmed' || myPart.status === 'pending' || myPart.status === 'waitlist') && (
+            <PrimaryButton variant="outline" fullWidth onClick={() => void leaveConfirmedEvent()}>Покинуть событие</PrimaryButton>
+          )}
           {currentUser?.role === 'admin' && !unpublished && <PrimaryButton variant="outline" fullWidth onClick={() => void unpublishByAdmin()}>Снять с публикации</PrimaryButton>}
           <button
             type="button"
@@ -298,7 +300,7 @@ export function EventDetailPage() {
         </MobileActionBar>
       )}
 
-      {joinOpen && <EventJoinPanel event={event} onClose={() => setJoinOpen(false)} />}
+      {joinOpen && <EventJoinPanel event={event} onClose={() => setJoinOpen(false)} onJoined={() => void refresh()} />}
     </div>
   )
 }

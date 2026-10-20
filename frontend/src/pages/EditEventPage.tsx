@@ -36,6 +36,7 @@ export function EditEventPage() {
   const [busy, setBusy] = useState(false)
   const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
   const [organizationId, setOrganizationId] = useState(event?.organizationId ?? '')
+  const [addressError, setAddressError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -57,6 +58,11 @@ export function EditEventPage() {
   const save = async (form: FormEvent) => {
     form.preventDefault()
     if (!title.trim() || !sportName.trim() || !address.trim() || !city.trim()) return
+    if (latitude == null || longitude == null) {
+      setAddressError('Выберите существующий адрес из подсказок.')
+      return
+    }
+    setAddressError('')
     setBusy(true)
     const ok = await editEvent(event.id, {
       title, description, address, city, district: district || undefined, sportName,
@@ -101,7 +107,10 @@ export function EditEventPage() {
           address={address}
           city={city}
           district={district}
+          latitude={latitude}
+          longitude={longitude}
           onChange={(location) => {
+            setAddressError('')
             setAddress(location.address)
             setCity(location.city)
             setDistrict(location.district)
@@ -109,6 +118,7 @@ export function EditEventPage() {
             setLongitude(location.longitude)
           }}
         />
+        {addressError && <p role="alert" className="text-sm text-warning">{addressError}</p>}
         <label className="block text-sm text-muted">Район
           <input value={district} onChange={(form) => setDistrict(form.target.value)} placeholder="Заполнится после выбора адреса" className="mt-1 w-full rounded-xl bg-card px-3 py-2.5 text-white" />
         </label>

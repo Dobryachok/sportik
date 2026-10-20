@@ -142,6 +142,11 @@ export const fetchComments = (eventId: string) => request<Comment[]>(`/events/${
 export const createEvent = (input: CreateEventInput) => request<{ id: string }>('/events', { method: 'POST', body: JSON.stringify(input) })
 export const updateEvent = (eventId: string, input: CreateEventInput) => request<{ id: string }>(`/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', body: JSON.stringify(input) })
 export const joinEvent = (eventId: string) => request<{ status: 'confirmed' | 'pending' | 'waitlist' }>(`/events/${encodeURIComponent(eventId)}/join`, { method: 'POST' })
+export const joinEventAsTeam = (eventId: string, teamId: string) =>
+  request<{ registered: number; waitlisted: number; pending: number }>(
+    `/events/${encodeURIComponent(eventId)}/join-team`,
+    { method: 'POST', body: JSON.stringify({ teamId }) },
+  )
 export const leaveEvent = (eventId: string) => request<void>(`/events/${encodeURIComponent(eventId)}/join`, { method: 'DELETE' })
 export const addComment = (eventId: string, text: string) => request<{ created: boolean }>(`/events/${encodeURIComponent(eventId)}/comments`, { method: 'POST', body: JSON.stringify({ text }) })
 export const dismissNotification = (notificationId: string) => request<void>(`/notifications/${encodeURIComponent(notificationId)}/dismiss`, { method: 'PATCH' })

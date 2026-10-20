@@ -88,6 +88,16 @@ body {
   color: #fff !important;
 }
 
+:root:not([data-theme='dark']) .event-hero-surface .text-white,
+:root:not([data-theme='dark']) .event-hero-surface [class*='text-white/'] {
+  color: #fff !important;
+}
+
+:root:not([data-theme='dark']) .sportik-menu-tile-icon {
+  background: linear-gradient(135deg, #087bb8, #2aa8e8) !important;
+  color: #fff !important;
+}
+
 button,
 a,
 input,

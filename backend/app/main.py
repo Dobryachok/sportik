@@ -1469,6 +1469,8 @@ async def create_event(payload: EventInput, user=Depends(require_user), session:
     city = (payload.city or user.get('city') or '').strip()
     if not city:
         raise HTTPException(422, 'city is required')
+    if payload.latitude is None or payload.longitude is None:
+        raise HTTPException(422, 'Select a valid address from suggestions')
     await session.commit()
     async with session.begin():
         sport = await resolve_approved_sport_id(session, payload.sportName)
@@ -1510,6 +1512,8 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
     city = (payload.city or '').strip()
     if not city:
         raise HTTPException(422, 'city is required')
+    if payload.latitude is None or payload.longitude is None:
+        raise HTTPException(422, 'Select a valid address from suggestions')
     await session.commit()
     async with session.begin():
         event = (await session.execute(text('SELECT id,organizer_id,event_type,organization_id FROM events WHERE public_id=:id FOR UPDATE'),
@@ -1640,23 +1644,111 @@ async def join(event_id: str, user=Depends(require_user), session: AsyncSession 
     return {'status': 'confirmed' if result == 'REGISTERED' else 'waitlist' if result == 'WAITLIST' else 'pending'}
 
 
+class TeamEventJoinInput(BaseModel):
+    teamId: str = Field(min_length=2, max_length=80)
+
+
+@app.post('/api/v1/events/{event_id}/join-team', status_code=status.HTTP_201_CREATED)
+async def join_event_as_team(
+    event_id: str,
+    payload: TeamEventJoinInput,
+    user=Depends(require_user),
+    session: AsyncSession = Depends(db_session),
+):
+    counts = {'registered': 0, 'waitlisted': 0, 'pending': 0}
+    await session.commit()
+    async with session.begin():
+        event = (await session.execute(
+            text("SELECT id,organizer_id,capacity,join_mode,status,title FROM events WHERE public_id=:id FOR UPDATE"),
+            {'id': event_id},
+        )).mappings().first()
+        if not event or event['status'] != 'PUBLISHED':
+            raise HTTPException(404, 'Published event not found')
+        team = (await session.execute(
+            text('''SELECT t.id FROM teams t
+                JOIN team_members tm ON tm.team_id = t.id
+                WHERE t.public_id = :team AND tm.user_id = :user AND tm.role = 'CAPTAIN' AND t.status = 'ACTIVE' '''),
+            {'team': payload.teamId, 'user': user['db_id']},
+        )).mappings().first()
+        if not team:
+            raise HTTPException(403, 'Only the team captain can register the team for this event')
+        members = await rows(
+            session,
+            '''SELECT u.id AS db_id, u.public_id AS id, u.name
+               FROM team_members tm JOIN users u ON u.id = tm.user_id
+               WHERE tm.team_id = :team ORDER BY u.id''',
+            {'team': team['id']},
+        )
+        for member in members:
+            existing = (await session.execute(
+                text('SELECT id,status FROM event_registrations WHERE event_id=:event AND user_id=:user'),
+                {'event': event['id'], 'user': member['db_id']},
+            )).mappings().first()
+            if existing and existing['status'] != 'CANCELLED':
+                continue
+            registered = await session.scalar(
+                text("SELECT count(*) FROM event_registrations WHERE event_id=:event AND status='REGISTERED'"),
+                {'event': event['id']},
+            )
+            if registered >= event['capacity']:
+                result = 'WAITLIST'
+            elif event['join_mode'] == 'open':
+                result = 'REGISTERED'
+            else:
+                result = 'PENDING'
+            if existing:
+                await session.execute(
+                    text('UPDATE event_registrations SET status=:status,registered_at=now() WHERE id=:id'),
+                    {'status': result, 'id': existing['id']},
+                )
+            else:
+                await session.execute(
+                    text('INSERT INTO event_registrations(event_id,user_id,status) VALUES (:event,:user,:status)'),
+                    {'event': event['id'], 'user': member['db_id'], 'status': result},
+                )
+            if result == 'REGISTERED':
+                counts['registered'] += 1
+                member_user = {'db_id': member['db_id'], 'id': member['id'], 'name': member['name']}
+                await create_event_chat_activity(session, event['id'], event_id, member_user, 'PARTICIPANT_JOINED')
+            elif result == 'WAITLIST':
+                counts['waitlisted'] += 1
+                await session.execute(
+                    text('''INSERT INTO notifications(user_id,event_id,type,title,message)
+                        VALUES (:user,:event,'waitlist_joined',:title,:message)'''),
+                    {
+                        'user': member['db_id'], 'event': event['id'],
+                        'title': 'Вы в резерве',
+                        'message': f'Команда записана в резерв на «{event["title"]}».',
+                    },
+                )
+            else:
+                counts['pending'] += 1
+        await mark_start_completed_if_ready(session, user)
+    await restart_redis_cache()
+    return counts
+
+
 @app.delete('/api/v1/events/{event_id}/join', status_code=status.HTTP_204_NO_CONTENT)
 async def leave_event(event_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     activity = None
     await session.commit()
     async with session.begin():
-        registration = (await session.execute(text('''SELECT r.id,e.id AS event_db_id,e.public_id AS event_id
+        registration = (await session.execute(text('''SELECT r.id,e.id AS event_db_id,e.public_id AS event_id,r.status
             FROM event_registrations r JOIN events e ON e.id=r.event_id
-            WHERE e.public_id=:event AND r.user_id=:user AND e.status='PUBLISHED' AND r.status='REGISTERED'
+            WHERE e.public_id=:event AND r.user_id=:user AND e.status='PUBLISHED'
+              AND r.status IN ('REGISTERED','PENDING','WAITLIST')
             FOR UPDATE OF r,e'''), {'event': event_id, 'user': user['db_id']})).mappings().first()
         if not registration:
-            raise HTTPException(404, 'Confirmed participation not found')
+            raise HTTPException(404, 'Participation not found')
         event_row = (await session.execute(text('SELECT title FROM events WHERE id=:id'), {'id': registration['event_db_id']})).mappings().first()
         await session.execute(text("UPDATE event_registrations SET status='CANCELLED' WHERE id=:id"), {'id': registration['id']})
-        activity = await create_event_chat_activity(session, registration['event_db_id'], event_id, user, 'PARTICIPANT_LEFT')
-        await promote_waitlist(session, registration['event_db_id'], event_id, event_row['title'] if event_row else 'событие')
+        activity = None
+        if registration['status'] == 'REGISTERED':
+            activity = await create_event_chat_activity(session, registration['event_db_id'], event_id, user, 'PARTICIPANT_LEFT')
+            await promote_waitlist(session, registration['event_db_id'], event_id, event_row['title'] if event_row else 'событие')
     await restart_redis_cache()
-    await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})
+    if activity:
+        await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})
 
 
 class CommentInput(BaseModel):
