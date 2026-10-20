@@ -49,6 +49,7 @@ export interface Sport {
   name: string
   slug: string
   eventCount?: number
+  backgroundImage?: string | null
 }
 
 export interface Event {

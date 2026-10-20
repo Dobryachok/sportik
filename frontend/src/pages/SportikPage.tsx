@@ -143,7 +143,7 @@ export function SportikPage() {
         gl={{ antialias: true }}
         dpr={[1, 2]}
       >
-        <color attach="background" args={['#0d0f11']} />
+        <color attach="background" args={['#ffffff']} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[4, 6, 4]} intensity={1.3} />
         <directionalLight position={[-3, 2, -2]} intensity={0.35} />
@@ -276,7 +276,7 @@ export function SportikPage() {
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
-            className="pointer-events-auto flex items-center gap-1 rounded-full border border-white/10 bg-card/95 px-4 py-2 text-sm font-medium text-white shadow-[0_-8px_20px_rgba(0,0,0,0.24)] backdrop-blur-xl"
+            className="sportik-menu-open-btn pointer-events-auto flex items-center gap-1 rounded-full border border-white/10 bg-card/95 px-4 py-2 text-sm font-medium text-white shadow-[0_-8px_20px_rgba(0,0,0,0.24)] backdrop-blur-xl"
             aria-label="Открыть меню"
           >
             Меню

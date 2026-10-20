@@ -18,6 +18,7 @@ export function LocationPicker({ address, city, district, latitude, longitude, o
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([])
   const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
+  const [addressNotFound, setAddressNotFound] = useState(false)
   const latestRequest = useRef(0)
 
   useEffect(() => {
@@ -25,21 +26,27 @@ export function LocationPicker({ address, city, district, latitude, longitude, o
     if (query.length < 3) {
       setSuggestions([])
       setLoading(false)
+      setAddressNotFound(false)
       return
     }
     const requestId = ++latestRequest.current
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
       setLoading(true)
+      setAddressNotFound(false)
       void suggestAddresses(query, city, controller.signal)
         .then((items) => {
           if (requestId === latestRequest.current) {
             setSuggestions(items)
+            setAddressNotFound(items.length === 0)
             setOpen(true)
           }
         })
         .catch(() => {
-          if (requestId === latestRequest.current) setSuggestions([])
+          if (requestId === latestRequest.current) {
+            setSuggestions([])
+            setAddressNotFound(false)
+          }
         })
         .finally(() => {
           if (requestId === latestRequest.current) setLoading(false)
@@ -54,8 +61,6 @@ export function LocationPicker({ address, city, district, latitude, longitude, o
   const choose = (item: LocationSuggestion) => {
     onChange({
       address: item.address,
-      // A suggestion is searched inside the selected city; do not unexpectedly
-      // switch the event to a neighbouring municipality returned by Nominatim.
       city,
       district: item.district,
       latitude: item.latitude,
@@ -63,7 +68,10 @@ export function LocationPicker({ address, city, district, latitude, longitude, o
     })
     setSuggestions([])
     setOpen(false)
+    setAddressNotFound(false)
   }
+
+  const displayAddress = verified ? address : address
 
   return (
     <div className="relative">
@@ -102,8 +110,19 @@ export function LocationPicker({ address, city, district, latitude, longitude, o
           ))}
         </ul>
       )}
+      {!loading && addressNotFound && address.trim().length >= 3 && !verified && (
+        <p className="mt-1.5 text-xs text-warning" role="alert">
+          Адрес не найден. Проверьте правильность написания.
+        </p>
+      )}
       <p className="mt-1.5 text-xs text-muted">
-        {verified ? 'Адрес подтверждён по карте.' : 'Выберите адрес из подсказки — без этого событие не сохранится.'}
+        {verified ? (
+          <>
+            Адрес подтверждён: <span className="text-white/90">{displayAddress}</span>
+          </>
+        ) : (
+          'Выберите адрес из подсказки — без этого событие не сохранится.'
+        )}
       </p>
     </div>
   )

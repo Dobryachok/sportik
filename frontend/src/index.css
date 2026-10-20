@@ -98,6 +98,16 @@ body {
   color: #fff !important;
 }
 
+:root:not([data-theme='dark']) .sportik-menu-open-btn {
+  background: linear-gradient(135deg, #087bb8, #2aa8e8) !important;
+  border-color: transparent !important;
+  color: #fff !important;
+}
+
+:root:not([data-theme='dark']) .sportik-menu-open-btn:hover {
+  filter: brightness(1.05);
+}
+
 button,
 a,
 input,

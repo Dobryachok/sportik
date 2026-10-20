@@ -80,6 +80,15 @@ export const fetchTeamEmailInvites = () => request<TeamEmailInvite[]>('/profile/
 export const acceptTeamEmailInvite = (inviteId: number) =>
   request<{ status: string; teamId: string }>(`/teams/invites/${inviteId}/accept`, { method: 'POST' })
 
+export const declineTeamEmailInvite = (inviteId: number) =>
+  request<{ status: string }>(`/teams/invites/${inviteId}/decline`, { method: 'POST' })
+
+export const leaveTeam = (teamId: string, newCaptainId?: string) =>
+  request<{ ok: boolean }>(`/teams/${encodeURIComponent(teamId)}/leave`, {
+    method: 'POST',
+    body: JSON.stringify(newCaptainId ? { newCaptainId } : {}),
+  })
+
 export const uploadTeamLogo = (teamId: string, file: File) => {
   const body = new FormData()
   body.append('file', file)

@@ -26,6 +26,10 @@ class TeamInviteBody(BaseModel):
     email: str = Field(min_length=3, max_length=254)
 
 
+class TeamLeaveBody(BaseModel):
+    newCaptainId: str | None = Field(default=None, max_length=80)
+
+
 def register(app):
     from app.main import db_session, require_user, restart_redis_cache
 
@@ -270,10 +274,38 @@ def register(app):
         return await service.list_pending_team_invites(session, user['db_id'])
 
     @router.post('/teams/invites/{invite_id}/accept')
+    @router.post('/team-invitations/{invite_id}/accept')
     async def accept_team_invite(invite_id: int, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
         await session.commit()
         async with session.begin():
             result = await service.accept_team_email_invite(session, invite_id, user['db_id'])
+        await restart_redis_cache()
+        return result
+
+    @router.post('/teams/invites/{invite_id}/decline')
+    @router.post('/team-invitations/{invite_id}/decline')
+    async def decline_team_invite(invite_id: int, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+        await session.commit()
+        async with session.begin():
+            result = await service.decline_team_email_invite(session, invite_id, user['db_id'])
+        await restart_redis_cache()
+        return result
+
+    @router.post('/teams/{team_id}/leave')
+    async def leave_team_route(
+        team_id: str,
+        payload: TeamLeaveBody | None = None,
+        user=Depends(require_user),
+        session: AsyncSession = Depends(db_session),
+    ):
+        await session.commit()
+        async with session.begin():
+            result = await service.leave_team(
+                session,
+                team_id,
+                user['db_id'],
+                payload.newCaptainId if payload else None,
+            )
         await restart_redis_cache()
         return result
 

@@ -1,15 +1,17 @@
 import { Camera } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   acceptJoinRequest,
   fetchDiscoveryTeam,
   fetchTeamJoinRequests,
   inviteTeamByEmail,
   joinTeamRequest,
+  leaveTeam,
   rejectJoinRequest,
   uploadTeamLogo,
 } from '../api/discovery'
+import { useAppData } from '../app/AppDataContext'
 import { TeamMembersPreview } from '../components/discovery/TeamMembersPreview'
 import { PageHeader } from '../components/PageHeader'
 import { PrimaryButton } from '../components/PrimaryButton'
@@ -23,6 +25,8 @@ function teamRoleLabel(role: string | undefined | null) {
 }
 
 export function TeamDetailPage() {
+  const { currentUser } = useAppData()
+  const navigate = useNavigate()
   const { id: teamId = '' } = useParams()
   const [team, setTeam] = useState<DiscoveryTeamCard | null>(null)
   const [error, setError] = useState('')
@@ -33,6 +37,9 @@ export function TeamDetailPage() {
   const [inviteStatus, setInviteStatus] = useState('')
   const [inviteBusy, setInviteBusy] = useState(false)
   const [logoBusy, setLogoBusy] = useState(false)
+  const [leaveOpen, setLeaveOpen] = useState(false)
+  const [leaveBusy, setLeaveBusy] = useState(false)
+  const [newCaptainId, setNewCaptainId] = useState('')
   const logoInputRef = useRef<HTMLInputElement>(null)
 
   const loadTeam = () => {
@@ -139,6 +146,25 @@ export function TeamDetailPage() {
   }
 
   const canJoin = !team.viewerRole && !team.joinRequestStatus
+  const isMember = Boolean(team.viewerRole)
+  const isCaptain = team.viewerRole === 'CAPTAIN'
+  const captainTransferCandidates = team.members.filter((member) => member.id !== currentUser?.id)
+  const soleCaptain = isCaptain && team.membersCount <= 1
+
+  const confirmLeave = async () => {
+    if (leaveBusy) return
+    setLeaveBusy(true)
+    setError('')
+    try {
+      await leaveTeam(teamId, isCaptain && team.membersCount > 1 ? newCaptainId || undefined : undefined)
+      setLeaveOpen(false)
+      navigate('/profile')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось выйти из команды.')
+    } finally {
+      setLeaveBusy(false)
+    }
+  }
 
   return (
     <div className="page-frame pb-6">
@@ -196,6 +222,18 @@ export function TeamDetailPage() {
           <PrimaryButton className="mt-4" disabled={joinBusy} onClick={() => void submitJoin()}>
             {joinBusy ? 'Отправляем…' : 'Подать заявку на вступление'}
           </PrimaryButton>
+        )}
+        {isMember && (
+          <button
+            type="button"
+            className="mt-4 w-full rounded-xl border border-warning/40 px-4 py-2.5 text-sm font-semibold text-warning"
+            onClick={() => {
+              setNewCaptainId(captainTransferCandidates[0]?.id ?? '')
+              setLeaveOpen(true)
+            }}
+          >
+            Выйти из команды
+          </button>
         )}
         <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
           <div className="rounded-xl bg-bg/70 p-3">
@@ -316,6 +354,54 @@ export function TeamDetailPage() {
       <Link to="/discovery?mode=teams" className="mt-6 inline-block text-sm font-semibold text-accent">
         Вернуться к поиску команд
       </Link>
+
+      {leaveOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-card p-5 shadow-2xl">
+            <h3 className="text-lg font-bold text-white">Выйти из команды «{team.name}»?</h3>
+            {soleCaptain ? (
+              <p className="mt-3 text-sm text-muted">
+                Нельзя выйти из команды, пока вы являетесь единственным капитаном. Сначала распустите команду или передайте управление.
+              </p>
+            ) : (
+              <p className="mt-3 text-sm text-muted">
+                После выхода вы перестанете быть участником команды.
+              </p>
+            )}
+            {isCaptain && !soleCaptain && captainTransferCandidates.length > 0 && (
+              <label className="mt-4 block text-sm text-muted">
+                Новый капитан
+                <select
+                  value={newCaptainId}
+                  onChange={(event) => setNewCaptainId(event.target.value)}
+                  className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3 py-2.5 text-sm text-white"
+                >
+                  {captainTransferCandidates.map((member) => (
+                    <option key={member.id} value={member.id}>{member.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="mt-5 flex gap-2">
+              <button
+                type="button"
+                className="flex-1 rounded-xl border border-white/15 px-3 py-2.5 text-sm font-semibold text-white"
+                onClick={() => setLeaveOpen(false)}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                disabled={leaveBusy || soleCaptain || (isCaptain && team.membersCount > 1 && !newCaptainId)}
+                className="flex-1 rounded-xl bg-warning/90 px-3 py-2.5 text-sm font-bold text-bg disabled:opacity-50"
+                onClick={() => void confirmLeave()}
+              >
+                {leaveBusy ? 'Выходим…' : 'Выйти'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

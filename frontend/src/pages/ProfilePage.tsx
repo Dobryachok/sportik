@@ -1,7 +1,7 @@
 import { ArrowLeft, Camera, Link2, LogOut, MapPin, Pencil, Plus, Search, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { acceptTeamEmailInvite, createTeam, fetchProfileMemberships, fetchTeamEmailInvites } from '../api/discovery'
+import { acceptTeamEmailInvite, createTeam, declineTeamEmailInvite, fetchProfileMemberships, fetchTeamEmailInvites } from '../api/discovery'
 import { useAppData } from '../app/AppDataContext'
 import type { FollowPreview, ProfileMemberships, ProfileMembershipTeam, TeamEmailInvite } from '../data/discoveryTypes'
 import { fetchFollowers, fetchFollowing } from '../data/api'
@@ -392,20 +392,33 @@ export function ProfilePage() {
                         <p className="text-xs text-muted">от {invite.invitedByName}</p>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void acceptTeamEmailInvite(invite.inviteId)
-                          .then(() => {
-                            setTeamInvites((items) => items.filter((item) => item.inviteId !== invite.inviteId))
-                            loadMemberships()
-                          })
-                          .catch(() => undefined)
-                      }}
-                      className="min-h-10 rounded-xl bg-accent px-4 text-sm font-bold text-white"
-                    >
-                      Принять
-                    </button>
+                    <div className="flex flex-wrap gap-2 sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void declineTeamEmailInvite(invite.inviteId)
+                            .then(() => setTeamInvites((items) => items.filter((item) => item.inviteId !== invite.inviteId)))
+                            .catch(() => undefined)
+                        }}
+                        className="min-h-10 rounded-xl border border-white/15 px-4 text-sm font-semibold text-white"
+                      >
+                        Отклонить
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void acceptTeamEmailInvite(invite.inviteId)
+                            .then(() => {
+                              setTeamInvites((items) => items.filter((item) => item.inviteId !== invite.inviteId))
+                              loadMemberships()
+                            })
+                            .catch(() => undefined)
+                        }}
+                        className="min-h-10 rounded-xl bg-accent px-4 text-sm font-bold text-white"
+                      >
+                        Принять
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

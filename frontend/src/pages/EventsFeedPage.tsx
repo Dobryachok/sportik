@@ -18,7 +18,6 @@ export function EventsFeedPage() {
     <div className="page-frame pb-3">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <p className="mb-1 text-sm font-medium text-muted">Спортик помогает встретиться вживую</p>
           <h1 className="text-[2rem] font-bold leading-none tracking-[-0.045em] text-white sm:text-4xl">События</h1>
         </div>
         <div className="flex items-center gap-2"><CityChooser /><span className="md:hidden"><ThemeToggle compact /></span></div>
@@ -49,19 +48,30 @@ export function EventsFeedPage() {
           </Link>
         </div>
         {state.sports.length ? (
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {state.sports.map((sport, index) => (
               <Link
                 key={sport.id}
                 to={`/sport/${sport.slug}`}
-                className={`group relative min-h-32 overflow-hidden rounded-[1.3rem] border border-white/[0.08] bg-gradient-to-br p-4 ${sportTones[index % sportTones.length]}`}
+                style={{ aspectRatio: '1 / 1' }}
+                className={`group relative overflow-hidden rounded-[1.3rem] border border-white/[0.08] bg-gradient-to-br p-5 sm:p-6 ${
+                  sport.backgroundImage ? '' : sportTones[index % sportTones.length]
+                }`}
               >
+                {sport.backgroundImage && (
+                  <>
+                    <img src={sport.backgroundImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                    <span className="absolute inset-0 bg-black/35" aria-hidden />
+                  </>
+                )}
                 <span className="absolute -right-3 -top-8 text-[6.75rem] font-bold leading-none text-white/[0.055]" aria-hidden>
                   {sport.name.slice(0, 1)}
                 </span>
                 <div className="relative flex h-full flex-col justify-between">
-                  <span className="text-base font-bold leading-tight text-black">{sport.name}</span>
-                  <span className="text-sm text-black/65">
+                  <span className={`text-lg font-bold leading-tight sm:text-xl ${sport.backgroundImage ? 'text-white' : 'text-black'}`}>
+                    {sport.name}
+                  </span>
+                  <span className={`text-sm ${sport.backgroundImage ? 'text-white/85' : 'text-black/65'}`}>
                     {sport.eventCount ?? state.events.filter((event) => event.sportId === sport.id).length} мероприятий
                   </span>
                 </div>

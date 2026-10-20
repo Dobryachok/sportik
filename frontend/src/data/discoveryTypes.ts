@@ -69,6 +69,7 @@ export interface ProfileMembershipTeam {
   role: string
   sport: string
   logoUrl?: string
+  membersCount?: number
   membershipStatus?: 'member' | 'pending'
 }
 

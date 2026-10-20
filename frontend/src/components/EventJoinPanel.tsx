@@ -18,16 +18,19 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
   const { state, currentUser, participate } = useAppData()
   const organizer = state.users.find((item) => item.id === event.organizerUserId)
   const myPart = currentUser ? getUserParticipation(state, event.id, currentUser.id) : undefined
-  const [captainTeams, setCaptainTeams] = useState<Array<{ id: string; name: string }>>([])
+  const [captainTeams, setCaptainTeams] = useState<Array<{ id: string; name: string; membersCount: number }>>([])
   const [selectedTeamId, setSelectedTeamId] = useState('')
   const [teamBusy, setTeamBusy] = useState(false)
   const [teamMessage, setTeamMessage] = useState('')
+  const [teamConfirmOpen, setTeamConfirmOpen] = useState(false)
 
   useEffect(() => {
     void fetchProfileMemberships()
       .then((data) => {
         const teams = data.teams.filter((team) => team.role === 'CAPTAIN' && team.membershipStatus !== 'pending')
-        setCaptainTeams(teams.map((team) => ({ id: team.id, name: team.name })))
+        setCaptainTeams(
+          teams.map((team) => ({ id: team.id, name: team.name, membersCount: team.membersCount ?? 0 })),
+        )
         setSelectedTeamId(teams[0]?.id ?? '')
       })
       .catch(() => setCaptainTeams([]))
@@ -54,9 +57,12 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
     }
   }
 
+  const selectedTeam = captainTeams.find((team) => team.id === selectedTeamId)
+
   const handleTeamJoin = async () => {
     if (!selectedTeamId || teamBusy) return
     setTeamBusy(true)
+    setTeamConfirmOpen(false)
     setTeamMessage('')
     try {
       const result = await joinEventAsTeam(event.id, selectedTeamId)
@@ -121,8 +127,13 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
               <option key={team.id} value={team.id}>{team.name}</option>
             ))}
           </select>
-          <PrimaryButton className="mt-3" fullWidth disabled={teamBusy || !selectedTeamId} onClick={() => void handleTeamJoin()}>
-            {teamBusy ? 'Записываем…' : 'Записать команду'}
+          <PrimaryButton
+            className="mt-3"
+            fullWidth
+            disabled={teamBusy || !selectedTeamId}
+            onClick={() => setTeamConfirmOpen(true)}
+          >
+            {teamBusy ? 'Записываем…' : 'Зарегистрировать команду'}
           </PrimaryButton>
           {teamMessage && <p className="mt-2 text-xs text-muted">{teamMessage}</p>}
         </div>
@@ -131,11 +142,43 @@ export function EventJoinPanel({ event, onClose, onJoined }: EventJoinPanelProps
   )
 
   return (
+    <>
+    {teamConfirmOpen && selectedTeam && (
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+        <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-card p-5 shadow-2xl">
+          <h3 className="text-lg font-bold text-white">Зарегистрировать команду?</h3>
+          <p className="mt-2 text-sm text-muted">
+            Зарегистрировать команду «{selectedTeam.name}» на мероприятие «{event.title}»?
+          </p>
+          <p className="mt-2 text-sm font-semibold text-white">
+            В команде: {selectedTeam.membersCount || '—'} участников
+          </p>
+          <div className="mt-5 flex gap-2">
+            <button
+              type="button"
+              className="flex-1 rounded-xl border border-white/15 px-3 py-2.5 text-sm font-semibold text-white"
+              onClick={() => setTeamConfirmOpen(false)}
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              disabled={teamBusy}
+              className="flex-1 rounded-xl bg-accent px-3 py-2.5 text-sm font-bold text-white disabled:opacity-50"
+              onClick={() => void handleTeamJoin()}
+            >
+              Зарегистрировать
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="fixed inset-0 z-[70] flex items-end justify-center md:items-center md:p-4" role="dialog" aria-modal="true" aria-labelledby="join-event-title">
       <button type="button" className="absolute inset-0 bg-black/55 md:bg-black/60" aria-label="Закрыть" onClick={onClose} />
       <div className="relative z-10 w-full max-w-lg rounded-t-[1.35rem] border border-white/[0.1] bg-bg px-5 pb-6 pt-5 shadow-2xl md:rounded-[1.35rem] md:pb-5" style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom, 0px))' }}>
         {body}
       </div>
     </div>
+    </>
   )
 }

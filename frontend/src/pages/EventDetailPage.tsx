@@ -257,7 +257,7 @@ export function EventDetailPage() {
           </Link>
           {canJoin && (
             <PrimaryButton fullWidth className="hidden md:flex" onClick={openJoin}>
-              {event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}
+              {event.joinMode === 'open' ? 'Зарегистрироваться' : 'Подать заявку'}
             </PrimaryButton>
           )}
           {!unpublished && myPart?.status === 'pending' && (
@@ -290,7 +290,7 @@ export function EventDetailPage() {
         <MobileActionBar>
           {canJoin ? (
             <PrimaryButton fullWidth onClick={openJoin}>
-              {event.joinMode === 'open' ? 'Участвовать в событии' : 'Подать заявку'}
+              {event.joinMode === 'open' ? 'Зарегистрироваться' : 'Подать заявку'}
             </PrimaryButton>
           ) : myPart?.status === 'waitlist' ? (
             <PrimaryButton fullWidth disabled>Вы в резерве</PrimaryButton>

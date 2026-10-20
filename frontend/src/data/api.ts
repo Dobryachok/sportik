@@ -67,6 +67,13 @@ export const fetchFollowing = () =>
 export const requestSport = (name: string) => request<{ id: string; status: 'pending' }>('/sports/requests', { method: 'POST', body: JSON.stringify({ name }) })
 export interface PendingSport { id: string; name: string; slug: string; createdAt: string; requestedById?: string; requestedByName?: string }
 
+export interface AdminSportCatalogItem {
+  id: string
+  name: string
+  slug: string
+  backgroundImage?: string | null
+}
+
 export interface OrganizationApplicationInput {
   name: string
   description: string
@@ -136,7 +143,17 @@ export const fetchOrganization = (organizationId: string) => request<PublicOrgan
 export const fetchAdminEvents = (status: 'published' | 'unpublished' = 'published') => request<AdminEvent[]>(`/admin/events?status_value=${status.toUpperCase()}`)
 export const moderateEvent = (eventId: string, action: 'unpublish' | 'remove', reason = '') => request<{ id: string; status: 'unpublished' }>(`/admin/events/${encodeURIComponent(eventId)}/moderation`, { method: 'PATCH', body: JSON.stringify({ action, reason }) })
 export const fetchPendingSports = () => request<PendingSport[]>('/admin/sports')
+export const fetchAdminSportCatalog = () => request<AdminSportCatalogItem[]>('/admin/sports/catalog')
 export const reviewSport = (sportId: string, decision: 'approved' | 'rejected') => request<{ id: string; status: string }>(`/admin/sports/${encodeURIComponent(sportId)}`, { method: 'PATCH', body: JSON.stringify({ decision }) })
+
+export const uploadSportBackground = (sportId: string, file: File) => {
+  const body = new FormData()
+  body.append('file', file)
+  return request<{ backgroundImage: string }>(`/admin/sports/${encodeURIComponent(sportId)}/background`, { method: 'POST', body })
+}
+
+export const deleteSportBackground = (sportId: string) =>
+  request<void>(`/admin/sports/${encodeURIComponent(sportId)}/background`, { method: 'DELETE' })
 export const fetchEventParticipants = (eventId: string) => request<User[]>(`/events/${encodeURIComponent(eventId)}/participants`)
 export const fetchComments = (eventId: string) => request<Comment[]>(`/events/${encodeURIComponent(eventId)}/comments`)
 export const createEvent = (input: CreateEventInput) => request<{ id: string }>('/events', { method: 'POST', body: JSON.stringify(input) })

@@ -14,7 +14,12 @@ export function FollowListModal({ title, open, items, loading, onClose }: Follow
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/55 p-4 sm:items-center" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+      style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))', paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="flex max-h-[min(80dvh,520px)] w-full max-w-md flex-col rounded-2xl border border-white/10 bg-card shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
           <h2 className="text-lg font-bold text-white">{title}</h2>

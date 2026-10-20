@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -28,6 +29,8 @@ USER_EXCLUDE_SQL = '''
            OR (b.blocker_id = u.id AND b.blocked_id = :viewer)
     )
 '''
+
+TEAM_INVITE_TTL_DAYS = 30
 
 TEAM_EXCLUDE_SQL = '''
     AND t.status = 'ACTIVE'
@@ -134,6 +137,7 @@ async def user_teams_groups(session: AsyncSession, user_db_id: int) -> tuple[lis
     teams = await _rows(
         session,
         '''SELECT t.public_id AS id, t.name, tm.role, s.name AS sport, t.logo_url AS "logoUrl",
+           (SELECT count(*)::integer FROM team_members tm2 WHERE tm2.team_id = t.id) AS "membersCount",
            'member' AS "membershipStatus"
            FROM team_members tm
            JOIN teams t ON t.id = tm.team_id
@@ -733,19 +737,50 @@ async def invite_team_by_email(
     return {'ok': True, 'inviteId': int(invite_id), 'userFound': bool(invitee)}
 
 
-async def accept_team_email_invite(session: AsyncSession, invite_id: int, user_id: int) -> dict:
-    invite = await _row(
+def _invite_is_expired(created_at: datetime | None) -> bool:
+    if created_at is None:
+        return False
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - created_at > timedelta(days=TEAM_INVITE_TTL_DAYS)
+
+
+async def _load_team_email_invite(session: AsyncSession, invite_id: int, *, lock: bool = False) -> dict | None:
+    lock_sql = ' FOR UPDATE' if lock else ''
+    return await _row(
         session,
-        '''SELECT i.id, i.team_id, i.email, i.status, t.public_id AS "teamPublicId"
+        f'''SELECT i.id, i.team_id, i.email, i.status, i.created_at,
+           t.public_id AS "teamPublicId", t.status AS "teamStatus"
            FROM team_email_invites i JOIN teams t ON t.id = i.team_id
-           WHERE i.id = :id FOR UPDATE''',
+           WHERE i.id = :id{lock_sql}''',
         {'id': invite_id},
     )
+
+
+async def accept_team_email_invite(session: AsyncSession, invite_id: int, user_id: int) -> dict:
+    invite = await _load_team_email_invite(session, invite_id, lock=True)
     if not invite or invite['status'] != 'PENDING':
         raise HTTPException(404, 'Invite not found')
+    if invite['teamStatus'] != 'ACTIVE':
+        raise HTTPException(410, 'Team is no longer available')
+    if _invite_is_expired(invite.get('created_at')):
+        await session.execute(
+            text("UPDATE team_email_invites SET status = 'CANCELLED', responded_at = now() WHERE id = :id"),
+            {'id': invite_id},
+        )
+        raise HTTPException(410, 'Invite has expired')
     user_email = await session.scalar(text('SELECT lower(email) FROM users WHERE id = :id'), {'id': user_id})
     if user_email != invite['email'].lower():
         raise HTTPException(403, 'This invite was sent to another email address')
+    if await session.scalar(
+        text('SELECT 1 FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': invite['team_id'], 'user': user_id},
+    ):
+        await session.execute(
+            text("UPDATE team_email_invites SET status = 'ACCEPTED', invitee_user_id = :user, responded_at = now() WHERE id = :id"),
+            {'user': user_id, 'id': invite_id},
+        )
+        raise HTTPException(409, 'You are already a member of this team')
     await session.execute(
         text(
             '''INSERT INTO team_members(team_id, user_id, role)
@@ -758,6 +793,77 @@ async def accept_team_email_invite(session: AsyncSession, invite_id: int, user_i
         {'user': user_id, 'id': invite_id},
     )
     return {'status': 'ACCEPTED', 'teamId': invite['teamPublicId']}
+
+
+async def decline_team_email_invite(session: AsyncSession, invite_id: int, user_id: int) -> dict:
+    invite = await _load_team_email_invite(session, invite_id, lock=True)
+    if not invite or invite['status'] != 'PENDING':
+        raise HTTPException(404, 'Invite not found')
+    if _invite_is_expired(invite.get('created_at')):
+        await session.execute(
+            text("UPDATE team_email_invites SET status = 'CANCELLED', responded_at = now() WHERE id = :id"),
+            {'id': invite_id},
+        )
+        raise HTTPException(410, 'Invite has expired')
+    user_email = await session.scalar(text('SELECT lower(email) FROM users WHERE id = :id'), {'id': user_id})
+    if user_email != invite['email'].lower():
+        raise HTTPException(403, 'This invite was sent to another email address')
+    await session.execute(
+        text("UPDATE team_email_invites SET status = 'DECLINED', invitee_user_id = :user, responded_at = now() WHERE id = :id"),
+        {'user': user_id, 'id': invite_id},
+    )
+    return {'status': 'DECLINED'}
+
+
+async def leave_team(
+    session: AsyncSession,
+    team_public_id: str,
+    user_id: int,
+    new_captain_public_id: str | None = None,
+) -> dict:
+    team_id = await resolve_team_db_id(session, team_public_id)
+    team_status = await session.scalar(text("SELECT status FROM teams WHERE id = :id"), {'id': team_id})
+    if team_status != 'ACTIVE':
+        raise HTTPException(404, 'Team not found')
+    role = await session.scalar(
+        text('SELECT role FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': team_id, 'user': user_id},
+    )
+    if not role:
+        raise HTTPException(404, 'You are not a member of this team')
+    member_count = int(
+        await session.scalar(text('SELECT count(*) FROM team_members WHERE team_id = :team'), {'team': team_id}) or 0
+    )
+    if role == 'CAPTAIN':
+        if member_count <= 1:
+            raise HTTPException(
+                409,
+                'Нельзя выйти из команды, пока вы являетесь единственным капитаном. Сначала распустите команду или передайте управление.',
+            )
+        if not new_captain_public_id:
+            raise HTTPException(422, 'Select a new captain before leaving the team')
+        new_captain_id = await resolve_user_db_id(session, new_captain_public_id)
+        if new_captain_id == user_id:
+            raise HTTPException(422, 'Select another team member as captain')
+        is_member = await session.scalar(
+            text('SELECT 1 FROM team_members WHERE team_id = :team AND user_id = :user'),
+            {'team': team_id, 'user': new_captain_id},
+        )
+        if not is_member:
+            raise HTTPException(422, 'New captain must be a current team member')
+        await session.execute(
+            text("UPDATE team_members SET role = 'MEMBER' WHERE team_id = :team AND user_id = :user AND role = 'CAPTAIN'"),
+            {'team': team_id, 'user': user_id},
+        )
+        await session.execute(
+            text("UPDATE team_members SET role = 'CAPTAIN' WHERE team_id = :team AND user_id = :user"),
+            {'team': team_id, 'user': new_captain_id},
+        )
+    await session.execute(
+        text('DELETE FROM team_members WHERE team_id = :team AND user_id = :user'),
+        {'team': team_id, 'user': user_id},
+    )
+    return {'ok': True}
 
 
 async def attach_pending_team_invites(session: AsyncSession, user_id: int, email: str) -> None:

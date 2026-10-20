@@ -755,6 +755,8 @@ async def media(media_id: str, session: AsyncSession = Depends(db_session)):
     item = (await session.execute(text('SELECT filename,content_type FROM user_avatars WHERE id=:id'), {'id': media_id})).mappings().first()
     if not item and await table_exists(session, 'team_avatars'):
         item = (await session.execute(text('SELECT filename,content_type FROM team_avatars WHERE id=:id'), {'id': media_id})).mappings().first()
+    if not item and await table_exists(session, 'sport_backgrounds'):
+        item = (await session.execute(text('SELECT filename,content_type FROM sport_backgrounds WHERE id=:id'), {'id': media_id})).mappings().first()
     if not item:
         raise HTTPException(404, 'Media not found')
     path = settings.upload_dir / item['filename']
@@ -897,12 +899,18 @@ async def event_rows_by_public_ids(session, public_ids: list[str], public_only=T
 
 async def approved_sports_catalog(session: AsyncSession, event_public_ids: list[str]) -> list[dict]:
     sport_columns = await table_columns(session, 'sports')
+    background_sql = (
+        's.background_image AS "backgroundImage"'
+        if 'background_image' in sport_columns else 'NULL::text AS "backgroundImage"'
+    )
     if 'status' not in sport_columns:
-        return await rows(session, '''SELECT s.public_id AS id,s.name,s.slug,0::integer AS "eventCount"
+        return await rows(session, f'''SELECT s.public_id AS id,s.name,s.slug,0::integer AS "eventCount",
+            {background_sql}
             FROM sports s ORDER BY s.name,s.id''')
     ids = event_public_ids if event_public_ids else ['__no_events__']
-    return await rows(session, '''SELECT s.public_id AS id,s.name,s.slug,
-        COALESCE(cnt.c, 0)::integer AS "eventCount"
+    return await rows(session, f'''SELECT s.public_id AS id,s.name,s.slug,
+        COALESCE(cnt.c, 0)::integer AS "eventCount",
+        {background_sql}
         FROM sports s
         LEFT JOIN (
             SELECT e.sport_id, count(*)::integer AS c FROM events e
@@ -1313,6 +1321,110 @@ async def review_sport(sport_id: str, payload: SportReviewInput, user=Depends(re
     return {'id': sport_id, 'status': payload.decision}
 
 
+@app.get('/api/v1/admin/sports/catalog')
+async def admin_approved_sports_catalog(user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    sport_columns = await table_columns(session, 'sports')
+    background_sql = (
+        's.background_image AS "backgroundImage"'
+        if 'background_image' in sport_columns else 'NULL::text AS "backgroundImage"'
+    )
+    return await rows(
+        session,
+        f'''SELECT s.public_id AS id, s.name, s.slug, {background_sql}
+            FROM sports s WHERE s.status = 'APPROVED' ORDER BY s.name, s.id''',
+    )
+
+
+@app.post('/api/v1/admin/sports/{sport_id}/background')
+async def upload_sport_background(
+    sport_id: str,
+    file: UploadFile = File(...),
+    user=Depends(require_admin),
+    session: AsyncSession = Depends(db_session),
+):
+    data = await file.read(settings.max_avatar_bytes + 1)
+    kind = image_extension(data)
+    if len(data) > settings.max_avatar_bytes or not kind:
+        raise HTTPException(422, 'Background must be a JPEG, PNG, or WebP image up to 5 MB')
+    extension, content_type = kind
+    media_id = uuid4().hex
+    filename = media_id + extension
+    path = settings.upload_dir / filename
+    path.write_bytes(data)
+    old_filename = None
+    try:
+        await session.commit()
+        async with session.begin():
+            sport = (await session.execute(
+                text("SELECT id FROM sports WHERE public_id = :id AND status = 'APPROVED' FOR UPDATE"),
+                {'id': sport_id},
+            )).mappings().first()
+            if not sport:
+                raise HTTPException(404, 'Approved sport not found')
+            if await table_exists(session, 'sport_backgrounds'):
+                old_filename = await session.scalar(
+                    text('SELECT filename FROM sport_backgrounds WHERE sport_id = :id'),
+                    {'id': sport['id']},
+                )
+                await session.execute(
+                    text(
+                        '''INSERT INTO sport_backgrounds(id, sport_id, filename, content_type)
+                           VALUES (:media, :sport, :file, :type)
+                           ON CONFLICT (sport_id) DO UPDATE
+                           SET id = EXCLUDED.id, filename = EXCLUDED.filename,
+                               content_type = EXCLUDED.content_type, created_at = now()'''
+                    ),
+                    {'media': media_id, 'sport': sport['id'], 'file': filename, 'type': content_type},
+                )
+            sport_columns = await table_columns(session, 'sports')
+            if 'background_image' in sport_columns:
+                await session.execute(
+                    text('UPDATE sports SET background_image = :url WHERE id = :id'),
+                    {'url': f'/media/{media_id}', 'id': sport['id']},
+                )
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    if old_filename:
+        try:
+            (settings.upload_dir / old_filename).unlink(missing_ok=True)
+        except OSError:
+            pass
+    await restart_redis_cache()
+    return {'backgroundImage': f'/media/{media_id}'}
+
+
+@app.delete('/api/v1/admin/sports/{sport_id}/background', status_code=status.HTTP_204_NO_CONTENT)
+async def delete_sport_background(sport_id: str, user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    old_filename = None
+    await session.commit()
+    async with session.begin():
+        sport = (await session.execute(
+            text("SELECT id FROM sports WHERE public_id = :id AND status = 'APPROVED' FOR UPDATE"),
+            {'id': sport_id},
+        )).mappings().first()
+        if not sport:
+            raise HTTPException(404, 'Approved sport not found')
+        if await table_exists(session, 'sport_backgrounds'):
+            old_filename = await session.scalar(
+                text('SELECT filename FROM sport_backgrounds WHERE sport_id = :id'),
+                {'id': sport['id']},
+            )
+            await session.execute(text('DELETE FROM sport_backgrounds WHERE sport_id = :id'), {'id': sport['id']})
+        sport_columns = await table_columns(session, 'sports')
+        if 'background_image' in sport_columns:
+            await session.execute(
+                text('UPDATE sports SET background_image = NULL WHERE id = :id'),
+                {'id': sport['id']},
+            )
+    if old_filename:
+        try:
+            (settings.upload_dir / old_filename).unlink(missing_ok=True)
+        except OSError:
+            pass
+    await restart_redis_cache()
+
+
 @app.post('/api/v1/organizations/applications', status_code=status.HTTP_201_CREATED)
 async def request_organization(payload: OrganizationApplicationInput, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     await session.commit()
@@ -1606,6 +1718,7 @@ async def create_event_chat_activity(session: AsyncSession, event_db_id: int, ev
 
 
 @app.post('/api/v1/events/{event_id}/join', status_code=status.HTTP_201_CREATED)
+@app.post('/api/v1/events/{event_id}/register', status_code=status.HTTP_201_CREATED)
 async def join(event_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     activity = None
     await session.commit()
@@ -1649,6 +1762,7 @@ class TeamEventJoinInput(BaseModel):
 
 
 @app.post('/api/v1/events/{event_id}/join-team', status_code=status.HTTP_201_CREATED)
+@app.post('/api/v1/events/{event_id}/team-registration', status_code=status.HTTP_201_CREATED)
 async def join_event_as_team(
     event_id: str,
     payload: TeamEventJoinInput,
@@ -2030,6 +2144,11 @@ async def suggest_addresses(query: str, city: str | None = None):
     except RedisError:
         logger.info('Address suggestions were not cached')
     return suggestions
+
+
+@app.get('/api/v1/addresses/search')
+async def addresses_search(q: str, city: str | None = None):
+    return await suggest_addresses(q, city)
 
 
 @app.post('/api/v1/geo/reverse')
