@@ -939,9 +939,9 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
     liked: list[str] = []
     if user:
         favorites = [row['id'] for row in await rows(session, '''SELECT e.public_id AS id FROM event_favorites f JOIN events e ON e.id=f.event_id
-            WHERE f.user_id=:user_id AND e.status='PUBLISHED' ORDER BY f.id''', {'user_id': user['db_id']})]
+            WHERE f.user_id=:user_id AND e.status='PUBLISHED' ORDER BY e.start_at, e.public_id''', {'user_id': user['db_id']})]
         liked = [row['id'] for row in await rows(session, '''SELECT e.public_id AS id FROM event_likes f JOIN events e ON e.id=f.event_id
-            WHERE f.user_id=:user_id AND e.status='PUBLISHED' ORDER BY f.id''', {'user_id': user['db_id']})]
+            WHERE f.user_id=:user_id AND e.status='PUBLISHED' ORDER BY e.start_at, e.public_id''', {'user_id': user['db_id']})]
         missing_favorites = [event_id for event_id in favorites if event_id not in by_id]
         if missing_favorites:
             for event in await event_rows_by_public_ids(session, missing_favorites):
