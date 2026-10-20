@@ -28,7 +28,7 @@ export function SportHubPage() {
   ]
 
   return (
-    <div className="min-w-0 max-w-full">
+    <div className="page-frame">
       <PageHeader title={title} back right={<CityChooser />} />
 
       <div className="grid grid-cols-2 gap-3">

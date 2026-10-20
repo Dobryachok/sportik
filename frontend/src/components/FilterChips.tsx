@@ -17,8 +17,8 @@ export function FilterChips({
   variant = 'light',
 }: FilterChipsProps) {
   return (
-    <div className="max-md:-mx-4 max-md:overflow-x-hidden md:mx-0">
-      <div className="flex gap-2 overflow-x-auto px-4 pb-2 scrollbar-hide md:px-0">
+    <div className="overflow-x-hidden">
+      <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
         {items.map((item) => {
           const active = item.id === activeId
           const isLight = variant === 'light'

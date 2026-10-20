@@ -14,7 +14,7 @@ export function EventJoinPage() {
   const organizer = event ? state.users.find((item) => item.id === event.organizerUserId) : undefined
   const myPart = event && currentUser ? getUserParticipation(state, event.id, currentUser.id) : undefined
 
-  if (!event || event.status !== 'published') return <p className="text-muted">Запись недоступна</p>
+  if (!event || event.status !== 'published') return <p className="page-frame text-muted">Запись недоступна</p>
 
   const handleJoin = async () => {
     if (await participate(event.id)) navigate(`/events/${event.id}`)
@@ -24,7 +24,7 @@ export function EventJoinPage() {
   </PrimaryButton>
 
   return (
-    <div className="min-w-0 max-w-full pb-action-bar-only">
+    <div className="page-frame pb-action-bar-only">
       <PageHeader title="Запись на событие" back />
       <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-card p-4">
         <img src={organizer?.avatarUrl || '/images/hero.png'} alt="" className="h-14 w-14 shrink-0 rounded-full object-cover" />

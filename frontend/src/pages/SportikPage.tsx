@@ -129,7 +129,7 @@ export function SportikPage() {
       : null
 
   return (
-    <div className="relative h-full min-h-[100dvh] w-full">
+    <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded-[1.35rem]">
       <Canvas
         className="absolute inset-0"
         camera={{ position: [0, 1.15, 3.1], fov: 40 }}
@@ -159,7 +159,7 @@ export function SportikPage() {
         />
       </Canvas>
 
-      <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-3 md:top-5">
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-3">
         <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-card/90 px-4 py-3 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-xl">
           <div className="flex items-center justify-between gap-3 text-sm">
             <p className="font-semibold text-white">{STAGE_LABELS[stage]}</p>
@@ -178,7 +178,7 @@ export function SportikPage() {
         </div>
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-[calc(var(--app-nav-height)+env(safe-area-inset-bottom,0px))] z-10 flex justify-center px-3 py-3 md:bottom-0">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-3 py-3">
         {showMenu ? (
           <div className="pointer-events-auto w-full max-w-lg rounded-[1.35rem] border border-white/10 bg-card/95 p-3 shadow-[0_-12px_28px_rgba(0,0,0,0.28)] backdrop-blur-xl">
             <div className="relative mb-3 flex min-h-9 items-center justify-center">
@@ -265,7 +265,7 @@ export function SportikPage() {
       </div>
 
       {currentHint && (
-        <div className="absolute inset-0 z-40 flex items-end justify-center px-4 pb-[calc(var(--app-nav-height)+env(safe-area-inset-bottom,0px)+11rem)] md:items-center md:pb-0">
+        <div className="absolute inset-0 z-40 flex items-end justify-center px-3 pb-4 md:items-center md:pb-0">
           <div className="absolute inset-0 bg-black/55" aria-hidden />
           <div
             role="dialog"

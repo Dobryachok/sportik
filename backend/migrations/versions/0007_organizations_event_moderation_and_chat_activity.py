@@ -1,12 +1,12 @@
 """Add organization approval workflow and event chat activity.
 
-Revision ID: 0007_organizations_event_moderation_and_chat_activity
-Revises: 0006_follows_and_sport_moderation
+Revision ID: 0007_orgs_events_chat
+Revises: 0006_follows_sport_mod
 """
 from alembic import op
 
-revision = '0007_organizations_event_moderation_and_chat_activity'
-down_revision = '0006_follows_and_sport_moderation'
+revision = '0007_orgs_events_chat'
+down_revision = '0006_follows_sport_mod'
 branch_labels = None
 depends_on = None
 

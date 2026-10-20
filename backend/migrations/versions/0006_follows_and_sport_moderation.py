@@ -1,11 +1,11 @@
 """Add user follows and approval workflow for new sports.
 
-Revision ID: 0006_follows_and_sport_moderation
+Revision ID: 0006_follows_sport_mod
 Revises: 0005_half_star_levels
 """
 from alembic import op
 
-revision = '0006_follows_and_sport_moderation'
+revision = '0006_follows_sport_mod'
 down_revision = '0005_half_star_levels'
 branch_labels = None
 depends_on = None
@@ -17,7 +17,12 @@ def upgrade():
     op.execute('ALTER TABLE sports ADD COLUMN IF NOT EXISTS reviewed_by BIGINT REFERENCES users(id) ON DELETE SET NULL')
     op.execute('ALTER TABLE sports ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ')
     op.execute("UPDATE sports SET status='APPROVED' WHERE status IS NULL")
-    op.execute("ALTER TABLE sports ADD CONSTRAINT sports_status_check CHECK (status IN ('PENDING','APPROVED','REJECTED'))")
+    op.execute("""
+        DO $$ BEGIN
+            ALTER TABLE sports ADD CONSTRAINT sports_status_check CHECK (status IN ('PENDING','APPROVED','REJECTED'));
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+    """)
     op.execute('CREATE INDEX IF NOT EXISTS idx_sports_status_created ON sports(status, created_at, id)')
     op.execute('''CREATE TABLE IF NOT EXISTS user_follows (
         follower_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
