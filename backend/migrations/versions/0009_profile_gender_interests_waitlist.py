@@ -1,17 +1,21 @@
 """Profile gender/interests and event waitlist registrations.
 
-Revision ID: 0009_prof_gender_interests
+Revision ID: 0009_profile_gender_interests_waitlist
 Revises: 0008_start_completed
 """
 from alembic import op
 
-revision = '0009_prof_gender_interests'
+revision = '0009_profile_gender_interests_waitlist'
 down_revision = '0008_start_completed'
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
+    # Alembic stores revision ids in varchar(32); this id is 33 characters.
+    op.execute(
+        'ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(128)'
+    )
     op.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS gender VARCHAR(20)")
     op.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS interests JSONB NOT NULL DEFAULT '[]'::jsonb")
 

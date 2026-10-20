@@ -12,10 +12,6 @@ depends_on = None
 
 
 def upgrade():
-    # Alembic creates version_num as varchar(32); later revision ids can be longer.
-    op.execute(
-        'ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(128)'
-    )
     op.execute('ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS start_completed BOOLEAN NOT NULL DEFAULT FALSE')
 
 
