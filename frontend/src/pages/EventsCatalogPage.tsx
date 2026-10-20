@@ -1,9 +1,10 @@
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { CityChooser } from '../components/CityChooser'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { DateStrip } from '../components/DateStrip'
+import { EventCalendarPicker, eventDateKey } from '../components/EventCalendarPicker'
 import { EventCard, getParticipantAvatars } from '../components/EventCard'
 import { FilterChips } from '../components/FilterChips'
 import { PageHeader } from '../components/PageHeader'
@@ -26,7 +27,7 @@ function startOfWeek(date: Date): Date {
 }
 
 export function EventsCatalogPage() {
-  const { state } = useAppData()
+  const { state, refresh } = useAppData()
   const [searchParams] = useSearchParams()
   const requestedSportId = searchParams.get('sport') ?? ''
   const requestedType = searchParams.get('type') as Event['eventType'] | null
@@ -35,13 +36,28 @@ export function EventsCatalogPage() {
   const [district, setDistrict] = useState('all')
   const [selected, setSelected] = useState(() => new Date())
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()))
+  const [calendarOpen, setCalendarOpen] = useState(false)
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
 
   const days = useMemo(() => buildWeek(weekStart), [weekStart])
+  const markedDays = useMemo(() => {
+    const keys = new Set<string>()
+    getPublishedEvents(state).forEach((event) => keys.add(eventDateKey(event.startsAt)))
+    return keys
+  }, [state])
   const moveWeek = (delta: number) => {
     const next = new Date(weekStart)
     next.setDate(next.getDate() + delta * 7)
     setWeekStart(next)
     setSelected(next)
+  }
+
+  const pickDate = (date: Date) => {
+    setSelected(date)
+    setWeekStart(startOfWeek(date))
   }
 
   const events = useMemo(
@@ -78,16 +94,30 @@ export function EventsCatalogPage() {
       />
 
       <section className="mt-5 rounded-[1.35rem] border border-white/[0.08] bg-card px-3 py-3 sm:px-4">
-        <div className="mb-3 flex items-center justify-between px-1">
+        <div className="mb-3 flex items-center justify-between gap-2 px-1">
           <button type="button" onClick={() => moveWeek(-1)} className="flex h-9 items-center gap-1 rounded-lg px-2 text-sm font-semibold text-muted transition-colors hover:bg-white/[0.06] hover:text-white">
             <ChevronLeft size={17} /> Неделя назад
+          </button>
+          <button
+            type="button"
+            onClick={() => setCalendarOpen(true)}
+            className="flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm font-semibold text-white transition-colors hover:bg-white/[0.08]"
+          >
+            <CalendarDays size={17} /> Календарь
           </button>
           <button type="button" onClick={() => moveWeek(1)} className="flex h-9 items-center gap-1 rounded-lg px-2 text-sm font-semibold text-accent transition-colors hover:bg-accent/10">
             Вперёд <ChevronRight size={17} />
           </button>
         </div>
-        <DateStrip days={days} selected={selected} onSelect={setSelected} />
+        <DateStrip days={days} selected={selected} markedDays={markedDays} onSelect={pickDate} />
       </section>
+      <EventCalendarPicker
+        open={calendarOpen}
+        selected={selected}
+        markedDays={markedDays}
+        onClose={() => setCalendarOpen(false)}
+        onSelect={pickDate}
+      />
 
       <section className="mt-7">
         <div className="mb-4 flex items-center justify-between gap-3">

@@ -236,4 +236,4 @@ def register(app):
         await restart_redis_cache()
         return created
 
-    app.include_router(router)
+    app.include_router(router, prefix='/api/v1')

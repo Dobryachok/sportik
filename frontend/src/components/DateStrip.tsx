@@ -3,10 +3,18 @@ import { ruWeekdayShort } from '../lib/format'
 interface DateStripProps {
   days: Date[]
   selected: Date
+  markedDays?: ReadonlySet<string>
   onSelect: (d: Date) => void
 }
 
-export function DateStrip({ days, selected, onSelect }: DateStripProps) {
+function dayKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+export function DateStrip({ days, selected, markedDays, onSelect }: DateStripProps) {
   return (
     <div className="overflow-x-hidden">
       <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
@@ -30,7 +38,9 @@ export function DateStrip({ days, selected, onSelect }: DateStripProps) {
             >
               <span className={`text-[11px] font-semibold ${active ? 'text-muted' : 'text-muted'}`}>{weekday}</span>
               <span className="mt-0.5 text-lg font-bold leading-none">{d.getDate()}</span>
-              {active && <span className="absolute bottom-1.5 h-1 w-1 rounded-full bg-accent" />}
+              {markedDays?.has(dayKey(d)) && (
+                <span className={`absolute bottom-1.5 h-1 w-1 rounded-full ${active ? 'bg-accent' : 'bg-accent/80'}`} />
+              )}
             </button>
           )
         })}

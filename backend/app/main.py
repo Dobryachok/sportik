@@ -426,14 +426,18 @@ def set_session(response: Response, token: str):
 
 
 class Credentials(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=10, max_length=128)
     name: str | None = Field(default=None, max_length=150)
 
     @field_validator('email')
     @classmethod
     def normalize_email(cls, value):
-        return str(value).strip().lower()
+        cleaned = str(value).strip().lower()
+        local, _, domain = cleaned.partition('@')
+        if not local or not domain or '.' not in domain or ' ' in cleaned:
+            raise ValueError('Enter a valid email address')
+        return cleaned
 
     @field_validator('password')
     @classmethod
@@ -1487,9 +1491,15 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
 
 
 async def notify_event_attendees(session: AsyncSession, event_db_id: int, title: str, message: str, exclude_user_id: int | None = None):
-    recipients = await rows(session, '''SELECT DISTINCT r.user_id FROM event_registrations r
-        WHERE r.event_id=:event AND r.status IN ('REGISTERED','PENDING','WAITLIST')
-        AND (:exclude IS NULL OR r.user_id <> :exclude)''', {'event': event_db_id, 'exclude': exclude_user_id})
+    if exclude_user_id is None:
+        recipients = await rows(session, '''SELECT DISTINCT r.user_id FROM event_registrations r
+            WHERE r.event_id=:event AND r.status IN ('REGISTERED','PENDING','WAITLIST')''',
+            {'event': event_db_id})
+    else:
+        recipients = await rows(session, '''SELECT DISTINCT r.user_id FROM event_registrations r
+            WHERE r.event_id=:event AND r.status IN ('REGISTERED','PENDING','WAITLIST')
+            AND r.user_id <> :exclude''',
+            {'event': event_db_id, 'exclude': exclude_user_id})
     for recipient in recipients:
         await session.execute(text('''INSERT INTO notifications(user_id,event_id,type,title,message)
             VALUES (:user,:event,'event_updated',:title,:message)'''), {
@@ -1625,7 +1635,7 @@ async def websocket_chat_user(websocket: WebSocket, session: AsyncSession):
 def websocket_origin_trusted(websocket: WebSocket):
     origin = websocket.headers.get('origin')
     if not origin:
-        return False
+        return bool(websocket.headers.get('sec-websocket-key'))
     clean_origin = origin.rstrip('/')
     if clean_origin in settings.allowed_origins:
         return True

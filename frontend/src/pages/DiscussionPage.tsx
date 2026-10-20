@@ -35,12 +35,9 @@ export function DiscussionPage() {
     if (!id) return
     let disposed = false
     let reconnectTimer: number | undefined
-    const apiBase = import.meta.env.VITE_API_BASE_URL || window.location.origin
     const connect = () => {
-      const endpoint = new URL(apiBase, window.location.origin)
-      endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
-      endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/api/v1/events/${encodeURIComponent(id)}/ws`
-      const socket = new WebSocket(endpoint.toString())
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/events/${encodeURIComponent(id)}/ws`)
       socketRef.current = socket
       socket.onopen = () => { if (!disposed) { setSocketReady(true); setChatError('') } }
       socket.onmessage = (event) => {
@@ -86,10 +83,14 @@ export function DiscussionPage() {
       }
       socket.onerror = () => { if (!disposed) setSocketReady(false) }
     }
+    const poll = window.setInterval(() => {
+      if (!disposed) void refreshComments(id)
+    }, 4000)
     void refreshComments(id)
     connect()
     return () => {
       disposed = true
+      window.clearInterval(poll)
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
       socketRef.current?.close()
       socketRef.current = null

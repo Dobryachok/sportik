@@ -26,7 +26,20 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     let message = 'Не удалось выполнить запрос. Попробуйте ещё раз.'
     try {
       const body = (await response.json()) as { detail?: unknown }
-      if (typeof body.detail === 'string' && body.detail) message = body.detail
+      if (typeof body.detail === 'string' && body.detail) {
+        message = body.detail
+      } else if (Array.isArray(body.detail)) {
+        const parts = body.detail
+          .map((item) => {
+            if (!item || typeof item !== 'object') return ''
+            const entry = item as { msg?: string; loc?: unknown[] }
+            const field = Array.isArray(entry.loc) ? entry.loc.filter((part) => part !== 'body').join('.') : ''
+            const text = entry.msg ?? ''
+            return field ? `${field}: ${text}` : text
+          })
+          .filter(Boolean)
+        if (parts.length) message = parts.join('; ')
+      }
     } catch { /* a useful generic message is already set */ }
     throw new ApiError(message, response.status)
   }
