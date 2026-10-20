@@ -29,5 +29,18 @@ class Settings(BaseSettings):
     def allowed_origins(self) -> list[str]:
         return [value.strip().rstrip('/') for value in self.cors_origins.split(',') if value.strip()]
 
+    @property
+    def geo_contact_email_effective(self) -> str:
+        """Nominatim requires a reachable contact; admin email is a practical fallback."""
+        return (self.geo_contact_email or self.admin_email or '').strip()
+
+    @property
+    def geo_user_agent_effective(self) -> str:
+        base = (self.geo_user_agent or 'Sportik/1.0').strip()
+        email = self.geo_contact_email_effective
+        if email and '(' not in base:
+            return f'{base} ({email})'
+        return base
+
 
 settings = Settings()

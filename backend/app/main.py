@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from io import BytesIO
 import secrets
 import time
@@ -1252,8 +1253,72 @@ class SportRequestInput(BaseModel):
         return value
 
 
+_CYRILLIC_TO_LATIN = str.maketrans(
+    {
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+        'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'sch',
+        'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e', 'ю': 'yu', 'я': 'ya',
+    }
+)
+
+
+def sport_slug_from_name(name: str) -> str:
+    lowered = name.strip().lower().translate(_CYRILLIC_TO_LATIN)
+    slug = re.sub(r'[^a-z0-9]+', '-', lowered).strip('-')
+    if len(slug) < 2:
+        slug = f'sport-{uuid4().hex[:8]}'
+    return slug[:100]
+
+
+def normalize_sport_slug(value: str) -> str:
+    slug = value.strip().lower()
+    slug = re.sub(r'[^a-z0-9-]+', '-', slug)
+    slug = re.sub(r'-{2,}', '-', slug).strip('-')
+    if len(slug) < 2:
+        raise ValueError('Slug is too short')
+    return slug[:100]
+
+
+async def assert_sport_catalog_unique(
+    session: AsyncSession,
+    sport_db_id: int,
+    name: str,
+    slug: str,
+) -> None:
+    conflict = await session.scalar(
+        text(
+            '''SELECT 1 FROM sports
+               WHERE id <> :id AND (lower(name) = lower(:name) OR slug = :slug) LIMIT 1'''
+        ),
+        {'id': sport_db_id, 'name': name, 'slug': slug},
+    )
+    if conflict:
+        raise HTTPException(409, 'Sport name or URL slug is already used')
+
+
 class SportReviewInput(BaseModel):
-    decision: str = Field(pattern='^(approved|rejected)$')
+    decision: str | None = Field(default=None, pattern='^(approved|rejected)$')
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    slug: str | None = Field(default=None, min_length=2, max_length=100)
+
+    @field_validator('name')
+    @classmethod
+    def clean_review_name(cls, value: str | None):
+        if value is None:
+            return value
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError('Sport name cannot be blank')
+        return cleaned
+
+    @field_validator('slug')
+    @classmethod
+    def clean_review_slug(cls, value: str | None):
+        if value is None:
+            return value
+        return normalize_sport_slug(value)
 
 
 @app.post('/api/v1/sports/requests', status_code=status.HTTP_201_CREATED)
@@ -1277,9 +1342,15 @@ async def request_sport(payload: SportRequestInput, user=Depends(require_user), 
                 WHERE id=:id'''), {'user': user['db_id'], 'id': existing['id']})
         else:
             sport_id = 'sp-' + uuid4().hex[:12]
+            base_slug = sport_slug_from_name(payload.name)
+            slug = base_slug
+            suffix = 1
+            while await session.scalar(text('SELECT 1 FROM sports WHERE slug=:slug'), {'slug': slug}):
+                slug = f'{base_slug[:90]}-{suffix}'
+                suffix += 1
             await session.execute(text('''INSERT INTO sports(public_id,name,slug,status,requested_by)
                 VALUES (:id,:name,:slug,'PENDING',:user)'''), {
-                    'id': sport_id, 'name': payload.name, 'slug': 'sport-' + uuid4().hex[:12], 'user': user['db_id'],
+                    'id': sport_id, 'name': payload.name, 'slug': slug, 'user': user['db_id'],
                 })
         admins = await rows(session, '''SELECT DISTINCT ur.user_id FROM user_roles ur
             JOIN roles r ON r.id=ur.role_id WHERE r.name='ADMIN' ''')
@@ -1301,24 +1372,47 @@ async def pending_sports(user=Depends(require_admin), session: AsyncSession = De
 
 @app.patch('/api/v1/admin/sports/{sport_id}')
 async def review_sport(sport_id: str, payload: SportReviewInput, user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    if payload.decision is None and payload.name is None and payload.slug is None:
+        raise HTTPException(422, 'Provide a decision or fields to update')
     await session.commit()
     async with session.begin():
-        sport = (await session.execute(text('''SELECT id,name,requested_by FROM sports
+        sport = (await session.execute(text('''SELECT id,name,slug,requested_by FROM sports
             WHERE public_id=:id AND status='PENDING' FOR UPDATE'''), {'id': sport_id})).mappings().first()
         if not sport:
             raise HTTPException(404, 'Pending sport not found')
+        next_name = payload.name if payload.name is not None else sport['name']
+        next_slug = payload.slug if payload.slug is not None else sport['slug']
+        if payload.slug is None and payload.name is not None and str(sport['slug']).startswith('sport-'):
+            next_slug = sport_slug_from_name(next_name)
+        if payload.name is not None or payload.slug is not None:
+            await assert_sport_catalog_unique(session, int(sport['id']), next_name, next_slug)
+            await session.execute(
+                text('UPDATE sports SET name=:name, slug=:slug WHERE id=:id'),
+                {'name': next_name, 'slug': next_slug, 'id': sport['id']},
+            )
+        if payload.decision is None:
+            await restart_redis_cache()
+            return {
+                'id': sport_id,
+                'name': next_name,
+                'slug': next_slug,
+                'status': 'pending',
+            }
         status_value = 'APPROVED' if payload.decision == 'approved' else 'REJECTED'
-        await session.execute(text('''UPDATE sports SET status=:status,reviewed_by=:reviewer,reviewed_at=now()
-            WHERE id=:id'''), {'status': status_value, 'reviewer': user['db_id'], 'id': sport['id']})
+        await session.execute(
+            text('''UPDATE sports SET status=:status,reviewed_by=:reviewer,reviewed_at=now()
+                WHERE id=:id'''),
+            {'status': status_value, 'reviewer': user['db_id'], 'id': sport['id']},
+        )
         if sport['requested_by']:
             await session.execute(text('''INSERT INTO notifications(user_id,type,title,message)
                 VALUES (:user,'sport_review',:title,:message)'''), {
                     'user': sport['requested_by'],
-                    'title': f'Вид спорта «{sport["name"]}» {"одобрен" if status_value == "APPROVED" else "отклонён"}',
+                    'title': f'Вид спорта «{next_name}» {"одобрен" if status_value == "APPROVED" else "отклонён"}',
                     'message': 'Теперь его можно выбрать при создании мероприятия.' if status_value == 'APPROVED' else 'Попробуйте уточнить название и отправить другую заявку.',
                 })
     await restart_redis_cache()
-    return {'id': sport_id, 'status': payload.decision}
+    return {'id': sport_id, 'name': next_name, 'slug': next_slug, 'status': payload.decision}
 
 
 @app.get('/api/v1/admin/sports/catalog')
@@ -2217,19 +2311,45 @@ def _build_address_suggestions(raw_items: list, city: str) -> list[dict]:
     return suggestions[:8]
 
 
+async def _geo_throttle() -> None:
+    global _geo_last_request
+    delay = 1.05 - (time.monotonic() - _geo_last_request)
+    if delay > 0:
+        await asyncio.sleep(delay)
+    _geo_last_request = time.monotonic()
+
+
 async def _nominatim_search(client: httpx.AsyncClient, params: dict) -> list:
-    response = await client.get(
-        settings.geo_search_url,
-        params={
-            **params,
-            'format': 'jsonv2',
-            'addressdetails': 1,
-            'limit': 8,
-            'email': settings.geo_contact_email,
-        },
-    )
-    response.raise_for_status()
-    raw = response.json()
+    email = settings.geo_contact_email_effective
+    if not email:
+        return []
+    try:
+        response = await client.get(
+            settings.geo_search_url,
+            params={
+                **params,
+                'format': 'jsonv2',
+                'addressdetails': 1,
+                'limit': 8,
+                'email': email,
+            },
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            'Nominatim HTTP %s for %s: %s',
+            exc.response.status_code,
+            sorted(params.keys()),
+            (exc.response.text or '')[:240],
+        )
+        return []
+    except httpx.HTTPError as exc:
+        logger.warning('Nominatim request failed (%s): %s', sorted(params.keys()), exc)
+        return []
+    try:
+        raw = response.json()
+    except ValueError:
+        return []
     return raw if isinstance(raw, list) else []
 
 
@@ -2246,9 +2366,12 @@ async def suggest_addresses(
         return []
     if len(term) > 180 or len(city) > 150:
         raise HTTPException(422, 'Address query is too long')
-    if not settings.geo_contact_email:
-        raise HTTPException(503, 'Geocoder contact is not configured')
-    lookup = f'{term}, {city}' if city and city.casefold() not in term.casefold() else term
+    if not settings.geo_contact_email_effective:
+        raise HTTPException(
+            503,
+            'Geocoder contact is not configured (set GEO_CONTACT_EMAIL or ADMIN_EMAIL)',
+        )
+    lookup = f'{term}, {city}, Россия' if city and city.casefold() not in term.casefold() else f'{term}, Россия'
     cache_key = 'geo:suggest:v2:' + hashlib.sha256(f'{lookup}|{city}'.casefold().encode()).hexdigest()
     try:
         cached = await redis.get(cache_key)
@@ -2256,31 +2379,26 @@ async def suggest_addresses(
             return json.loads(cached)
     except (RedisError, ValueError):
         logger.info('Address suggestion cache unavailable; querying Nominatim directly')
-    global _geo_last_request
     try:
         await asyncio.wait_for(_geo_lock.acquire(), timeout=0.1)
     except TimeoutError:
         raise HTTPException(429, 'Address suggestions are busy; try again in a moment')
     try:
-        delay = 1 - (time.monotonic() - _geo_last_request)
-        if delay > 0:
-            await asyncio.sleep(delay)
-        _geo_last_request = time.monotonic()
-        try:
-            async with httpx.AsyncClient(timeout=settings.geo_timeout_seconds, headers={'User-Agent': settings.geo_user_agent}) as client:
-                raw_items: list = []
-                if city:
-                    raw_items = await _nominatim_search(
-                        client,
-                        {'street': term, 'city': city, 'countrycodes': 'ru'},
-                    )
-                if not raw_items:
-                    raw_items = await _nominatim_search(
-                        client,
-                        {'q': lookup, 'countrycodes': 'ru'},
-                    )
-        except (httpx.HTTPError, ValueError):
-            raise HTTPException(503, 'Unable to suggest addresses')
+        await _geo_throttle()
+        headers = {'User-Agent': settings.geo_user_agent_effective}
+        async with httpx.AsyncClient(timeout=settings.geo_timeout_seconds, headers=headers) as client:
+            raw_items: list = []
+            if city:
+                raw_items = await _nominatim_search(
+                    client,
+                    {'street': term, 'city': city, 'country': 'Russia'},
+                )
+            if not raw_items:
+                await _geo_throttle()
+                raw_items = await _nominatim_search(
+                    client,
+                    {'q': lookup, 'countrycodes': 'ru'},
+                )
     finally:
         _geo_lock.release()
     suggestions = _build_address_suggestions(raw_items, city)
@@ -2301,16 +2419,13 @@ async def reverse_geo(payload: ReverseGeoInput, request: Request):
     # Public city discovery permits browsing before registration. Browser origin
     # and global provider rate limits still apply; coordinates are never stored.
     await csrf_origin(request)
-    if not settings.geo_contact_email:
+    if not settings.geo_contact_email_effective:
         raise HTTPException(503, 'Geocoder contact is not configured; enter the city manually')
-    global _geo_last_request
     async with _geo_lock:
-        delay = 1 - (time.monotonic() - _geo_last_request)
-        if delay > 0: await asyncio.sleep(delay)
-        _geo_last_request = time.monotonic()
-        headers = {'User-Agent': settings.geo_user_agent}
+        await _geo_throttle()
+        headers = {'User-Agent': settings.geo_user_agent_effective}
         params = {'lat': payload.latitude, 'lon': payload.longitude, 'format': 'jsonv2', 'zoom': 10, 'addressdetails': 1}
-        if settings.geo_contact_email: params['email'] = settings.geo_contact_email
+        params['email'] = settings.geo_contact_email_effective
         for attempt in range(2):
             try:
                 async with httpx.AsyncClient(timeout=settings.geo_timeout_seconds, headers=headers) as client:
@@ -2322,9 +2437,7 @@ async def reverse_geo(payload: ReverseGeoInput, request: Request):
                     break
             except (httpx.HTTPError, ValueError):
                 if attempt == 0:
-                    # Respect the provider's global one-request-per-second policy.
-                    await asyncio.sleep(1)
-                    _geo_last_request = time.monotonic()
+                    await _geo_throttle()
     # Deliberately do not retain coordinates.  The client offers manual city input on failure.
     raise HTTPException(503, 'Unable to determine city; enter it manually')
 

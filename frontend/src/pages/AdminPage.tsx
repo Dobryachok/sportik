@@ -12,6 +12,7 @@ import {
   moderateEvent,
   reviewOrganization,
   reviewSport,
+  updatePendingSport,
   uploadSportBackground,
   type AdminEvent,
   type AdminSportCatalogItem,
@@ -30,6 +31,7 @@ export function AdminPage() {
   const [busyId, setBusyId] = useState('')
   const [sportCatalog, setSportCatalog] = useState<AdminSportCatalogItem[]>([])
   const [sportBgBusy, setSportBgBusy] = useState('')
+  const [sportDrafts, setSportDrafts] = useState<Record<string, { name: string; slug: string }>>({})
 
   const load = async () => {
     try {
@@ -44,6 +46,9 @@ export function AdminPage() {
       setOrganizations(nextOrganizations)
       setEvents(nextEvents)
       setSportCatalog(catalog)
+      setSportDrafts(
+        Object.fromEntries(nextSports.map((sport) => [sport.id, { name: sport.name, slug: sport.slug }])),
+      )
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Не удалось загрузить очередь модерации.')
     }
@@ -51,11 +56,49 @@ export function AdminPage() {
 
   useEffect(() => { if (currentUser?.role === 'admin') void load() }, [currentUser?.role])
 
-  const decideSport = async (sport: PendingSport, decision: 'approved' | 'rejected') => {
+  const sportDraft = (sport: PendingSport) => sportDrafts[sport.id] ?? { name: sport.name, slug: sport.slug }
+
+  const patchSportDraft = (sportId: string, patch: Partial<{ name: string; slug: string }>) => {
+    setSportDrafts((items) => {
+      const sport = sports.find((item) => item.id === sportId)
+      const base = items[sportId] ?? (sport ? { name: sport.name, slug: sport.slug } : { name: '', slug: '' })
+      return { ...items, [sportId]: { ...base, ...patch } }
+    })
+  }
+
+  const savePendingSport = async (sport: PendingSport) => {
+    const draft = sportDraft(sport)
     setBusyId(sport.id)
-    try { await reviewSport(sport.id, decision); setSports((items) => items.filter((item) => item.id !== sport.id)); await refresh() }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Не удалось обработать заявку.') }
-    finally { setBusyId('') }
+    setError('')
+    try {
+      const updated = await updatePendingSport(sport.id, { name: draft.name.trim(), slug: draft.slug.trim() })
+      setSports((items) => items.map((item) => (item.id === sport.id ? { ...item, name: updated.name, slug: updated.slug } : item)))
+      setSportDrafts((items) => ({ ...items, [sport.id]: { name: updated.name, slug: updated.slug } }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось сохранить изменения.')
+    } finally {
+      setBusyId('')
+    }
+  }
+
+  const decideSport = async (sport: PendingSport, decision: 'approved' | 'rejected') => {
+    const draft = sportDraft(sport)
+    setBusyId(sport.id)
+    setError('')
+    try {
+      await reviewSport(sport.id, decision, { name: draft.name.trim(), slug: draft.slug.trim() })
+      setSports((items) => items.filter((item) => item.id !== sport.id))
+      setSportDrafts((items) => {
+        const next = { ...items }
+        delete next[sport.id]
+        return next
+      })
+      await refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Не удалось обработать заявку.')
+    } finally {
+      setBusyId('')
+    }
   }
 
   const decideOrganization = async (organization: PendingOrganization, decision: 'approved' | 'rejected') => {
@@ -191,7 +234,69 @@ export function AdminPage() {
     </section>
     <section className="mt-5 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
       <div className="flex items-baseline justify-between gap-3"><div className="flex gap-3"><Dumbbell className="mt-0.5 text-accent" size={21} /><div><h2 className="text-lg font-bold">Виды спорта на модерации</h2><p className="mt-1 text-sm text-muted">Одобренные виды станут доступны при создании мероприятий.</p></div></div><span className="rounded-full bg-accent/10 px-2.5 py-1 text-sm font-bold text-accent">{sports.length}</span></div>
-      <div className="mt-4 space-y-3">{sports.map((sport) => <article key={sport.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-bg/50 p-3"><div><p className="font-semibold text-white">{sport.name}</p><p className="mt-1 text-xs text-muted">Предложил: {sport.requestedByName || 'пользователь'}</p></div><div className="flex gap-2"><button type="button" disabled={busyId === sport.id} onClick={() => void decideSport(sport, 'rejected')} className="rounded-lg border border-warning/50 px-3 py-2 text-sm font-semibold text-warning disabled:opacity-50">Отклонить</button><button type="button" disabled={busyId === sport.id} onClick={() => void decideSport(sport, 'approved')} className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Одобрить</button></div></article>)}{sports.length === 0 && <p className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-sm text-muted">Новых заявок нет.</p>}</div>
+      <div className="mt-4 space-y-3">
+        {sports.map((sport) => {
+          const draft = sportDraft(sport)
+          return (
+            <article key={sport.id} className="rounded-xl border border-white/10 bg-bg/50 p-4">
+              <p className="text-xs text-muted">
+                Предложил: {sport.requestedByName || 'пользователь'} ·{' '}
+                {new Date(sport.createdAt).toLocaleDateString('ru-RU')}
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className="text-muted">Название</span>
+                  <input
+                    value={draft.name}
+                    onChange={(event) => patchSportDraft(sport.id, { name: event.target.value })}
+                    maxLength={100}
+                    className="mt-1 w-full rounded-lg bg-card px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="text-muted">Ссылка (slug)</span>
+                  <input
+                    value={draft.slug}
+                    onChange={(event) => patchSportDraft(sport.id, { slug: event.target.value })}
+                    maxLength={100}
+                    className="mt-1 w-full rounded-lg bg-card px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-accent"
+                  />
+                  <span className="mt-1 block text-xs text-muted">Используется в URL: /sport/{draft.slug || '…'}</span>
+                </label>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={busyId === sport.id || !draft.name.trim() || !draft.slug.trim()}
+                  onClick={() => void savePendingSport(sport)}
+                  className="rounded-lg border border-white/15 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  Сохранить
+                </button>
+                <button
+                  type="button"
+                  disabled={busyId === sport.id}
+                  onClick={() => void decideSport(sport, 'rejected')}
+                  className="rounded-lg border border-warning/50 px-3 py-2 text-sm font-semibold text-warning disabled:opacity-50"
+                >
+                  Отклонить
+                </button>
+                <button
+                  type="button"
+                  disabled={busyId === sport.id || !draft.name.trim() || !draft.slug.trim()}
+                  onClick={() => void decideSport(sport, 'approved')}
+                  className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  Одобрить
+                </button>
+              </div>
+            </article>
+          )
+        })}
+        {sports.length === 0 && (
+          <p className="rounded-xl border border-dashed border-white/15 px-4 py-6 text-center text-sm text-muted">Новых заявок нет.</p>
+        )}
+      </div>
     </section>
   </div>
 }

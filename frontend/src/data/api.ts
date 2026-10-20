@@ -144,7 +144,21 @@ export const fetchAdminEvents = (status: 'published' | 'unpublished' = 'publishe
 export const moderateEvent = (eventId: string, action: 'unpublish' | 'remove', reason = '') => request<{ id: string; status: 'unpublished' }>(`/admin/events/${encodeURIComponent(eventId)}/moderation`, { method: 'PATCH', body: JSON.stringify({ action, reason }) })
 export const fetchPendingSports = () => request<PendingSport[]>('/admin/sports')
 export const fetchAdminSportCatalog = () => request<AdminSportCatalogItem[]>('/admin/sports/catalog')
-export const reviewSport = (sportId: string, decision: 'approved' | 'rejected') => request<{ id: string; status: string }>(`/admin/sports/${encodeURIComponent(sportId)}`, { method: 'PATCH', body: JSON.stringify({ decision }) })
+export const updatePendingSport = (sportId: string, input: { name?: string; slug?: string }) =>
+  request<PendingSport & { status: string }>(`/admin/sports/${encodeURIComponent(sportId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  })
+
+export const reviewSport = (
+  sportId: string,
+  decision: 'approved' | 'rejected',
+  input?: { name?: string; slug?: string },
+) =>
+  request<{ id: string; name: string; slug: string; status: string }>(
+    `/admin/sports/${encodeURIComponent(sportId)}`,
+    { method: 'PATCH', body: JSON.stringify({ decision, ...input }) },
+  )
 
 export const uploadSportBackground = (sportId: string, file: File) => {
   const body = new FormData()
