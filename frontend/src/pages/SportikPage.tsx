@@ -320,10 +320,17 @@ export function SportikPage() {
       ? `закрой ещё ${goal.challengesNeeded} ${goal.challengesNeeded === 1 ? 'челленж' : 'челленжа'}`
       : null
 
+  const canvasBottomClass = sheetExpanded
+    ? 'max-md:bottom-[min(58vh,24rem)]'
+    : 'max-md:bottom-11'
+
   return (
-    <div className="relative min-h-[calc(100dvh-var(--app-nav-height)-env(safe-area-inset-bottom,0px))] w-full flex-1 overflow-hidden md:min-h-[32rem] md:rounded-[1.35rem]">
+    <div
+      className="relative min-h-[calc(100dvh-var(--app-nav-height)-env(safe-area-inset-bottom,0px))] w-full flex-1 overflow-hidden md:min-h-[32rem] md:rounded-[1.35rem]"
+      style={{ ['--sportik-nav' as string]: 'calc(var(--app-nav-height) + env(safe-area-inset-bottom, 0px))' }}
+    >
       <Canvas
-        className="absolute inset-0"
+        className={`absolute inset-x-0 top-0 bottom-0 transition-[bottom] duration-300 ease-out md:inset-0 ${canvasBottomClass}`}
         camera={{ position: [0, 1.15, 3.1], fov: 40 }}
         gl={{ antialias: true }}
         dpr={[1, 2]}
@@ -367,8 +374,10 @@ export function SportikPage() {
       </div>
 
       <div
-        className={`pointer-events-auto absolute inset-x-0 bottom-0 z-20 flex flex-col overflow-hidden border-t border-white/10 bg-card/98 shadow-[0_-16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-[max-height] duration-300 ease-out md:bottom-3 md:left-1/2 md:w-full md:max-w-lg md:-translate-x-1/2 md:rounded-t-[1.35rem] md:border md:border-b-0 ${
-          sheetOpen ? 'max-h-[min(72vh,34rem)]' : 'max-h-12'
+        className={`pointer-events-auto absolute inset-x-0 z-20 flex flex-col overflow-hidden border-t border-white/10 bg-card/98 shadow-[0_-16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-[max-height] duration-300 ease-out max-md:bottom-0 md:bottom-3 md:left-1/2 md:w-full md:max-w-lg md:-translate-x-1/2 md:rounded-t-[1.35rem] md:border md:border-b-0 ${
+          sheetExpanded
+            ? 'max-h-[min(calc(100dvh-var(--sportik-nav)-3.25rem),42rem)] md:max-h-[min(72vh,34rem)]'
+            : 'max-h-11 md:max-h-12'
         }`}
       >
         <button
@@ -383,7 +392,7 @@ export function SportikPage() {
         </button>
 
         {sheetOpen && (
-          <div className="flex min-h-0 flex-1 flex-col px-4 pb-2 pt-1">
+          <div className="flex min-h-0 flex-1 flex-col px-4 pb-2 pt-1 max-md:max-h-[calc(100dvh-var(--sportik-nav)-4.5rem)]">
             <div className="relative mb-2 flex min-h-8 shrink-0 items-center justify-center">
               {panel !== 'home' && !hintsOpen ? (
                 <>
