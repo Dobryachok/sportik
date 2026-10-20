@@ -1,8 +1,8 @@
-import { Suspense, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Bounds, Center, OrbitControls } from '@react-three/drei'
 import { TOUCH } from 'three'
-import { SportikModel } from './sportik/SportikModel'
+import { SportikAvatar } from './sportik/SportikAvatar'
 import { ChevronLeft, Lock, Palette, ShoppingBag, Trophy } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
@@ -21,7 +21,8 @@ import {
   type SportikChallenge,
 } from './sportik/challenges'
 import { buildUnlockedKeySet, resolveDisplayModelUrl } from './sportik/displayModel'
-import { preloadSportikFile, preloadSportikGlb, preloadSportRowForStage, preloadSportRowVariants } from './sportik/modelLoader'
+import { preloadSportikFile, preloadSportikGlb, preloadSportRowForStage } from './sportik/modelLoader'
+import { useSportikGlbLoadState } from './sportik/useSportikGlb'
 import {
   availableBalance,
   readEquip,
@@ -33,6 +34,7 @@ import {
   type StoredEquip,
 } from './sportik/loadout'
 import {
+  defaultBodyModelUrl,
   profileBodyGender,
   sportBodyModelUrl,
   stageVariantIndex,
@@ -145,10 +147,9 @@ export function SportikPage() {
   const modelUrl = resolveDisplayModelUrl(stage, currentUser, equip, unlockedKeys)
   const balance = currentUser ? availableBalance(points, currentUser.id) : 0
   const bodyGender = profileBodyGender(currentUser)
-
-  useEffect(() => {
-    preloadSportikGlb(modelUrl)
-  }, [modelUrl])
+  const fallbackModelUrl = defaultBodyModelUrl(bodyGender)
+  const targetLoad = useSportikGlbLoadState(modelUrl)
+  const showModelLoadProgress = !targetLoad.loaded && (targetLoad.loading || targetLoad.progress > 0)
 
   useEffect(() => {
     if (!currentUser) return
@@ -170,39 +171,6 @@ export function SportikPage() {
       } catch { /* ignore */ }
     }
   }, [currentUser, unlockedRows, stage])
-
-  const titanVariantsLoaded = useRef(false)
-  useEffect(() => {
-    if (stage !== 'hight') {
-      titanVariantsLoaded.current = false
-      return
-    }
-    if (titanVariantsLoaded.current) return
-    titanVariantsLoaded.current = true
-    for (const row of unlockedRows) preloadSportRowVariants(row)
-  }, [stage, unlockedRows])
-
-  useEffect(() => {
-    if (!currentUser) return
-    const storageKey = `sportik-preloaded-owned:${currentUser.id}`
-    let known = new Set<string>()
-    try {
-      known = new Set(JSON.parse(sessionStorage.getItem(storageKey) || '[]'))
-    } catch { /* ignore */ }
-    let changed = false
-    for (const id of ownedIds) {
-      if (known.has(id)) continue
-      known.add(id)
-      changed = true
-      const item = findOwnedItem(id)
-      if (item?.modelFile) preloadSportikFile(item.modelFile)
-    }
-    if (changed) {
-      try {
-        sessionStorage.setItem(storageKey, JSON.stringify([...known]))
-      } catch { /* ignore */ }
-    }
-  }, [currentUser, ownedIds])
 
   const persistOwned = (ids: string[]) => {
     if (!currentUser) return
@@ -276,8 +244,8 @@ export function SportikPage() {
     const canPick = stage === 'hight'
     const allowed = canPick ? variantIndex : stageVariantIndex(stage, row.gender)
     if (!canPick && variantIndex !== allowed) return
-    const url = sportBodyModelUrl(row, canPick ? variantIndex : allowed)
-    preloadSportikGlb(url)
+    const index = canPick ? variantIndex : allowed
+    preloadSportikGlb(sportBodyModelUrl(row, index))
     persistEquip({ sportKey, variantIndex: canPick ? variantIndex : null, warehouseId: null })
   }
   const selectedChallenge = sportikChallenges.find((item) => item.id === selectedChallengeId) ?? null
@@ -339,13 +307,11 @@ export function SportikPage() {
         <ambientLight intensity={0.7} />
         <directionalLight position={[4, 6, 4]} intensity={1.3} />
         <directionalLight position={[-3, 2, -2]} intensity={0.35} />
-        <Suspense fallback={null}>
-          <Bounds key={modelUrl} fit margin={1.15}>
-            <Center>
-              <SportikModel url={modelUrl} />
-            </Center>
-          </Bounds>
-        </Suspense>
+        <Bounds key={modelUrl} fit margin={1.15}>
+          <Center>
+            <SportikAvatar targetUrl={modelUrl} fallbackUrl={fallbackModelUrl} />
+          </Center>
+        </Bounds>
         <OrbitControls
           enabled={!hintsOpen}
           enablePan={false}
@@ -357,6 +323,23 @@ export function SportikPage() {
           touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.ROTATE }}
         />
       </Canvas>
+
+      {showModelLoadProgress && (
+        <div className="pointer-events-none absolute inset-x-0 top-[42%] z-[12] flex -translate-y-1/2 justify-center px-8">
+          <div className="w-full max-w-[14rem] rounded-2xl border border-white/10 bg-card/92 px-4 py-3 shadow-[0_12px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+            <p className="text-center text-xs font-medium text-white/90">Загрузка модели</p>
+            <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-accent transition-[width] duration-150"
+                style={{ width: `${Math.max(4, Math.round(targetLoad.progress * 100))}%` }}
+              />
+            </div>
+            <p className="mt-2 text-center text-[11px] font-semibold tabular-nums text-muted">
+              {Math.round(targetLoad.progress * 100)}%
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 md:top-3 md:px-3">
         <div className="w-full border-b border-white/10 bg-card/95 px-4 py-2.5 backdrop-blur-xl md:mx-auto md:max-w-lg md:rounded-2xl md:border md:shadow-[0_10px_24px_rgba(0,0,0,0.2)]">
