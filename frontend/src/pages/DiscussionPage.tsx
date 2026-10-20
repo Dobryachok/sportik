@@ -56,11 +56,21 @@ export function DiscussionPage() {
             setSocketCanWrite(false)
             setChatError(payload.detail || 'Событие снято с публикации, чат закрыт.')
           }
+<<<<<<< HEAD
           if (payload.type === 'ack' && payload.clientMessageId === pendingMessageRef.current?.id) {
             const sent = pendingMessageRef.current
             pendingMessageRef.current = null
             setText((current) => (sent && current === sent.text) ? '' : current)
             setSending(false)
+=======
+          if (payload.type === 'ack') {
+            const pending = pendingMessageRef.current
+            if (pending && payload.clientMessageId === pending.id) {
+              pendingMessageRef.current = null
+              setText((current) => (current === pending.text ? '' : current))
+              setSending(false)
+            }
+>>>>>>> 2f0d1a1667e6f6621ecd934f1959aaed3225f8ff
           }
           if (payload.type === 'error') {
             if (!payload.clientMessageId || payload.clientMessageId === pendingMessageRef.current?.id) {
