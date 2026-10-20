@@ -9,6 +9,7 @@ import { FollowListModal } from '../components/FollowListModal'
 import { PrimaryButton } from '../components/PrimaryButton'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { GENDER_OPTIONS, INTEREST_CATALOG, genderLabel } from '../data/interestCatalog'
+import { formatReliabilityPercent } from '../lib/attendance'
 import type { SocialLink } from '../data/types'
 
 const maritalOptions = [
@@ -235,20 +236,32 @@ export function ProfilePage() {
         )}
 
         {!editing && (
-          <div className="mt-6 grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 pt-5">
-            <div>
-              <p className="text-2xl font-bold text-accent">{stats.events}</p>
-              <p className="mt-1 text-sm text-muted">событий</p>
+          <>
+            <div className="mt-6 flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-bg/50 px-4 py-3">
+              <ShieldCheck size={18} className="text-accent" aria-hidden />
+              <div className="text-left">
+                <p className="text-xs font-medium text-muted">Надёжность</p>
+                <p className="text-lg font-bold text-white">{formatReliabilityPercent(currentUser.reliabilityPercent)}</p>
+              </div>
+              <p className="ml-auto max-w-[11rem] text-right text-[11px] leading-4 text-muted">
+                По отметкам организаторов после событий
+              </p>
             </div>
-            <button type="button" onClick={openFollowing} className="text-center transition-opacity hover:opacity-85">
-              <p className="text-2xl font-bold text-accent">{stats.subscriptions}</p>
-              <p className="mt-1 text-sm text-muted">подписок</p>
-            </button>
-            <button type="button" onClick={openFollowers} className="text-center transition-opacity hover:opacity-85">
-              <p className="text-2xl font-bold text-accent">{stats.followers}</p>
-              <p className="mt-1 text-sm text-muted">подписчиков</p>
-            </button>
-          </div>
+            <div className="mt-4 grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 pt-5">
+              <div>
+                <p className="text-2xl font-bold text-accent">{stats.events}</p>
+                <p className="mt-1 text-sm text-muted">событий</p>
+              </div>
+              <button type="button" onClick={openFollowing} className="text-center transition-opacity hover:opacity-85">
+                <p className="text-2xl font-bold text-accent">{stats.subscriptions}</p>
+                <p className="mt-1 text-sm text-muted">подписок</p>
+              </button>
+              <button type="button" onClick={openFollowers} className="text-center transition-opacity hover:opacity-85">
+                <p className="text-2xl font-bold text-accent">{stats.followers}</p>
+                <p className="mt-1 text-sm text-muted">подписчиков</p>
+              </button>
+            </div>
+          </>
         )}
       </section>
 

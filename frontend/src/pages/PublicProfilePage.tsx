@@ -1,9 +1,10 @@
-import { ArrowLeft, Link2, MapPin } from 'lucide-react'
+import { ArrowLeft, Link2, MapPin, ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { fetchUser, toggleUserFollow } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
 import { genderLabel } from '../data/interestCatalog'
+import { formatReliabilityPercent } from '../lib/attendance'
 import type { User } from '../data/types'
 
 export function PublicProfilePage() {
@@ -66,7 +67,14 @@ export function PublicProfilePage() {
         {canFollow && <button type="button" disabled={followBusy} onClick={() => void toggleFollow()} className={`mt-5 min-h-11 rounded-xl px-5 text-sm font-bold transition-colors disabled:opacity-60 ${following ? 'border border-accent text-accent hover:bg-accent/10' : 'bg-accent text-white hover:bg-accent-hover'}`}>
           {followBusy ? 'Сохраняем…' : following ? 'Вы подписаны' : 'Подписаться'}
         </button>}
-        <div className="mt-6 grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 pt-5">
+        <div className="mt-6 flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-bg/50 px-4 py-3">
+          <ShieldCheck size={18} className="text-accent" aria-hidden />
+          <div className="text-left">
+            <p className="text-xs font-medium text-muted">Надёжность</p>
+            <p className="text-lg font-bold text-white">{formatReliabilityPercent(user.reliabilityPercent)}</p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 pt-5">
           <div><p className="text-2xl font-bold text-accent">{stats.events}</p><p className="mt-1 text-sm text-muted">событий</p></div>
           <div><p className="text-2xl font-bold text-accent">{stats.subscriptions}</p><p className="mt-1 text-sm text-muted">подписок</p></div>
           <div><p className="text-2xl font-bold text-accent">{stats.followers}</p><p className="mt-1 text-sm text-muted">подписчиков</p></div>

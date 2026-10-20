@@ -25,6 +25,13 @@ from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.attendance import (
+    attendance_deadline,
+    attendance_window_open,
+    ensure_aware,
+    registration_has_attendance,
+    user_reliability_column_sql,
+)
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -254,10 +261,12 @@ async def fetch_authenticated_user_row(session: AsyncSession, digest: str) -> di
     profile_columns = await table_columns(session, 'user_profiles')
     profile_fields = user_profile_fields_sql(profile_columns)
     stats_sql = await user_stats_sql(session)
+    reliability_sql = await user_reliability_column_sql(session)
     user = (await session.execute(text(f"""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
         {profile_fields},
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         {stats_sql},
+        {reliability_sql},
         {USER_ROLE_SQL}
         FROM auth_sessions s JOIN users u ON u.id=s.user_id
         LEFT JOIN user_profiles p ON p.user_id=u.id
@@ -336,6 +345,9 @@ def public_user(row):
     tags = interest_tags(row.get('interests'))
     if tags:
         result['interests'] = tags
+    reliability = row.get('reliabilityPercent')
+    if reliability is not None:
+        result['reliabilityPercent'] = int(reliability)
     return result
 
 
@@ -832,6 +844,7 @@ async def find_public_user(session: AsyncSession, public_id: str, viewer_id: int
     profile_columns = await table_columns(session, 'user_profiles')
     profile_fields = public_user_profile_fields_sql(profile_columns)
     stats_sql = await user_stats_sql(session)
+    reliability_sql = await user_reliability_column_sql(session)
     social_links_sql = (
         'p.social_links AS "socialLinks"'
         if 'social_links' in profile_columns else "'[]'::jsonb AS \"socialLinks\""
@@ -841,6 +854,7 @@ async def find_public_user(session: AsyncSession, public_id: str, viewer_id: int
         {profile_fields},
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         {stats_sql},
+        {reliability_sql},
         {USER_ROLE_SQL}
         FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
         WHERE u.public_id=:id AND u.status='ACTIVE' '''), {'id': public_id})).mappings().first()
@@ -1134,8 +1148,10 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
     notifications = []
     if user:
         notifications = await notification_rows(session, user['db_id'])
-        participations = await rows(session, '''SELECT 'part-' || r.id AS id,e.public_id AS "eventId",u.public_id AS "userId",
-           CASE r.status WHEN 'REGISTERED' THEN 'confirmed' WHEN 'PENDING' THEN 'pending' WHEN 'WAITLIST' THEN 'waitlist' WHEN 'CANCELLED' THEN 'cancelled' ELSE 'rejected' END AS status,r.registered_at AS "createdAt"
+        attended_sql = 'r.attended AS attended' if await registration_has_attendance(session) else 'NULL::boolean AS attended'
+        participations = await rows(session, f'''SELECT 'part-' || r.id AS id,e.public_id AS "eventId",u.public_id AS "userId",
+           CASE r.status WHEN 'REGISTERED' THEN 'confirmed' WHEN 'PENDING' THEN 'pending' WHEN 'WAITLIST' THEN 'waitlist' WHEN 'CANCELLED' THEN 'cancelled' ELSE 'rejected' END AS status,
+           {attended_sql},r.registered_at AS "createdAt"
            FROM event_registrations r JOIN events e ON e.id=r.event_id JOIN users u ON u.id=r.user_id
            WHERE e.public_id=ANY(:ids) AND (r.user_id=:user_id OR e.organizer_id=:user_id) ORDER BY r.id''', params)
         for item in participations: item['createdAt'] = timestamp(item['createdAt'])
@@ -1212,6 +1228,79 @@ async def event_participants(event_id: str, session: AsyncSession = Depends(db_s
         WHERE e.public_id=:event AND e.status='PUBLISHED' AND r.status='REGISTERED' AND u.status='ACTIVE'
         ORDER BY r.registered_at,u.id''', {'event': event_id})
     return [public_user(participant) for participant in participants]
+
+
+async def attendance_event_row(session: AsyncSession, event_public_id: str):
+    return (await session.execute(text('''SELECT e.id,e.public_id,e.start_at,e.organizer_id,e.status
+        FROM events e WHERE e.public_id=:id'''), {'id': event_public_id})).mappings().first()
+
+
+async def attendance_response(session: AsyncSession, event_row) -> dict:
+    if not await registration_has_attendance(session):
+        raise HTTPException(503, 'Attendance is not available yet')
+    start_at = ensure_aware(event_row['start_at'])
+    reliability_sql = await user_reliability_column_sql(session)
+    attendance_rows = await rows(session, f'''SELECT 'part-' || r.id AS "participationId", u.public_id AS "userId", u.name,
+        r.attended AS attended, {reliability_sql}
+        FROM event_registrations r
+        JOIN users u ON u.id = r.user_id
+        WHERE r.event_id = :event AND r.status = 'REGISTERED'
+        ORDER BY u.name, r.id''', {'event': event_row['id']})
+    for row in attendance_rows:
+        if row.get('reliabilityPercent') is not None:
+            row['reliabilityPercent'] = int(row['reliabilityPercent'])
+    return {
+        'startsAt': timestamp(start_at),
+        'deadlineAt': timestamp(attendance_deadline(start_at)),
+        'windowOpen': attendance_window_open(start_at),
+        'rows': attendance_rows,
+    }
+
+
+@app.get('/api/v1/events/{event_id}/attendance')
+async def get_event_attendance(event_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    event_row = await attendance_event_row(session, event_id)
+    if not event_row:
+        raise HTTPException(404, 'Event not found')
+    if event_row['organizer_id'] != user['db_id']:
+        raise HTTPException(403, 'Only the event organizer may view attendance')
+    return await attendance_response(session, event_row)
+
+
+@app.put('/api/v1/events/{event_id}/attendance')
+async def save_event_attendance(event_id: str, payload: AttendanceSaveInput, user=Depends(require_user),
+                                session: AsyncSession = Depends(db_session)):
+    if not payload.marks:
+        raise HTTPException(422, 'No attendance marks provided')
+    await session.commit()
+    async with session.begin():
+        event_row = await attendance_event_row(session, event_id)
+        if not event_row:
+            raise HTTPException(404, 'Event not found')
+        if event_row['organizer_id'] != user['db_id']:
+            raise HTTPException(403, 'Only the event organizer may mark attendance')
+        if not await registration_has_attendance(session):
+            raise HTTPException(503, 'Attendance is not available yet')
+        start_at = ensure_aware(event_row['start_at'])
+        if not attendance_window_open(start_at):
+            raise HTTPException(403, 'Attendance can only be marked within 7 days after the event starts')
+        public_ids = [mark.userId for mark in payload.marks]
+        registrations = await rows(session, '''SELECT r.id,u.public_id AS "userId"
+            FROM event_registrations r JOIN users u ON u.id=r.user_id
+            WHERE r.event_id=:event AND r.status='REGISTERED' AND u.public_id = ANY(:users)''',
+                                   {'event': event_row['id'], 'users': public_ids})
+        allowed = {row['userId']: row['id'] for row in registrations}
+        for mark in payload.marks:
+            registration_id = allowed.get(mark.userId)
+            if registration_id is None:
+                raise HTTPException(404, f'Confirmed participant not found: {mark.userId}')
+            await session.execute(text('''UPDATE event_registrations
+                SET attended=:attended, attendance_marked_at=now(), attendance_marked_by=:organizer
+                WHERE id=:id'''),
+                                  {'attended': mark.attended, 'organizer': user['db_id'], 'id': registration_id})
+    await restart_redis_cache()
+    event_row = await attendance_event_row(session, event_id)
+    return await attendance_response(session, event_row)
 
 
 @app.patch('/api/v1/notifications/{notification_id}/dismiss', status_code=status.HTTP_204_NO_CONTENT)
@@ -2079,6 +2168,15 @@ async def leave_event(event_id: str, user=Depends(require_user), session: AsyncS
     await restart_redis_cache()
     if activity:
         await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})
+
+
+class AttendanceMarkInput(BaseModel):
+    userId: str
+    attended: bool
+
+
+class AttendanceSaveInput(BaseModel):
+    marks: list[AttendanceMarkInput] = Field(default_factory=list)
 
 
 class CommentInput(BaseModel):

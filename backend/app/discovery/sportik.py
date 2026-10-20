@@ -7,17 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 async def count_past_visits(session: AsyncSession, user_db_id: int) -> int:
-    return int(
-        await session.scalar(
-            text(
-                '''SELECT count(*)::integer FROM event_registrations r
+    has_attendance = await session.scalar(
+        text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = current_schema() AND table_name = 'event_registrations' "
+            "AND column_name = 'attended' LIMIT 1"
+        )
+    )
+    if has_attendance:
+        query = '''SELECT count(*)::integer FROM event_registrations r
+                   WHERE r.user_id = :user AND r.status = 'REGISTERED' AND r.attended = true'''
+    else:
+        query = '''SELECT count(*)::integer FROM event_registrations r
                    JOIN events e ON e.id = r.event_id
                    WHERE r.user_id = :user AND r.status = 'REGISTERED' AND e.start_at < now()'''
-            ),
-            {'user': user_db_id},
-        )
-        or 0
-    )
+    return int(await session.scalar(text(query), {'user': user_db_id}) or 0)
 
 
 def resolve_stage(visits: int, closed_challenges: int = 0) -> str:

@@ -1,6 +1,6 @@
 import type { AppState } from '../../data/types'
 import type { User } from '../../data/types'
-import { isPast } from '../../lib/format'
+import { participationCountsAsVisit } from '../../lib/attendance'
 import type { SportikStage } from './progress'
 import { sportikModelPath } from './models'
 
@@ -108,9 +108,9 @@ export function pastParticipationsBySport(state: AppState, userId: string) {
   const counts = new Map<SportBodyKey, number>()
 
   for (const part of state.participations) {
-    if (part.userId !== userId || part.status !== 'confirmed') continue
+    if (part.userId !== userId) continue
     const event = events.get(part.eventId)
-    if (!event || !isPast(event.startsAt)) continue
+    if (!event || !participationCountsAsVisit(part, event.startsAt)) continue
     const sport = sports.get(event.sportId)
     if (!sport) continue
     const row = matchSportBody(sport.name, sport.slug ?? '')

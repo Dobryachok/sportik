@@ -32,6 +32,8 @@ export interface User {
   startCompleted?: boolean
   viewerFollows?: boolean
   stats?: { events: number; subscriptions: number; followers: number }
+  /** Доля посещений по отметкам организаторов, 0–100; null — ещё нет отметок. */
+  reliabilityPercent?: number | null
 }
 
 export interface Organization {
@@ -85,6 +87,8 @@ export interface Participation {
   userId: string
   status: ParticipationStatus
   createdAt: string
+  /** true — был, false — не был, null/undefined — организатор ещё не отметил. */
+  attended?: boolean | null
 }
 
 export interface Comment {

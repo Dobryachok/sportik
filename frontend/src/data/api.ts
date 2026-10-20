@@ -184,6 +184,30 @@ export const deleteSportBackground = (sportId: string) =>
 export const deleteApprovedSport = (sportId: string) =>
   request<{ ok: boolean }>(`/admin/sports/${encodeURIComponent(sportId)}`, { method: 'DELETE' })
 export const fetchEventParticipants = (eventId: string) => request<User[]>(`/events/${encodeURIComponent(eventId)}/participants`)
+
+export type EventAttendanceRow = {
+  participationId: string
+  userId: string
+  name: string
+  attended: boolean | null
+  reliabilityPercent?: number | null
+}
+
+export type EventAttendanceResponse = {
+  startsAt: string
+  deadlineAt: string
+  windowOpen: boolean
+  rows: EventAttendanceRow[]
+}
+
+export const fetchEventAttendance = (eventId: string) =>
+  request<EventAttendanceResponse>(`/events/${encodeURIComponent(eventId)}/attendance`)
+
+export const saveEventAttendance = (eventId: string, marks: Array<{ userId: string; attended: boolean }>) =>
+  request<EventAttendanceResponse>(`/events/${encodeURIComponent(eventId)}/attendance`, {
+    method: 'PUT',
+    body: JSON.stringify({ marks }),
+  })
 export const fetchComments = (eventId: string) => request<Comment[]>(`/events/${encodeURIComponent(eventId)}/comments`)
 export const createEvent = (input: CreateEventInput) => request<{ id: string }>('/events', { method: 'POST', body: JSON.stringify(input) })
 export const updateEvent = (eventId: string, input: CreateEventInput) => request<{ id: string }>(`/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', body: JSON.stringify(input) })

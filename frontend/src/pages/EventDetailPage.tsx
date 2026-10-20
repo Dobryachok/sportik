@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { fetchEvent, fetchEventParticipants, moderateEvent } from '../data/api'
 import { useAppData } from '../app/AppDataContext'
 import { EventJoinPanel } from '../components/EventJoinPanel'
+import { EventAttendancePanel } from '../components/EventAttendancePanel'
 import { EventOrganizerCard } from '../components/EventOrganizerCard'
 import { MobileActionBar } from '../components/MobileActionBar'
 import { PrimaryButton } from '../components/PrimaryButton'
@@ -233,7 +234,13 @@ export function EventDetailPage() {
         {myPart && (
           <p className="mt-4 rounded-xl border border-accent/25 bg-accent/10 px-3 py-2 text-sm text-accent">
             Ваш статус: {myPart.status === 'confirmed' ? 'подтверждено' : myPart.status === 'pending' ? 'ожидает решения' : myPart.status === 'waitlist' ? 'в резерве' : myPart.status === 'cancelled' ? 'вы покинули событие' : 'отклонено'}
+            {eventPast && myPart.status === 'confirmed' && myPart.attended === true && ' · посещение подтверждено организатором'}
+            {eventPast && myPart.status === 'confirmed' && myPart.attended === false && ' · отмечено отсутствие'}
           </p>
+        )}
+
+        {isOrganizer && (
+          <EventAttendancePanel eventId={event.id} startsAt={event.startsAt} onSaved={() => void refresh()} />
         )}
 
         {isOrganizer && pending.length > 0 && (

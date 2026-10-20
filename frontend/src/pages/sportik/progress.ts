@@ -1,5 +1,5 @@
 import type { AppState } from '../../data/types'
-import { isPast } from '../../lib/format'
+import { participationCountsAsVisit } from '../../lib/attendance'
 
 export type SportikStage = 'default' | 'medium' | 'hight'
 
@@ -12,9 +12,9 @@ export const STAGE_LABELS: Record<SportikStage, string> = {
 export function countVisits(state: AppState, userId: string): number {
   const events = new Map(state.events.map((event) => [event.id, event]))
   return state.participations.filter((participation) => {
-    if (participation.userId !== userId || participation.status !== 'confirmed') return false
+    if (participation.userId !== userId) return false
     const event = events.get(participation.eventId)
-    return event ? isPast(event.startsAt) : false
+    return event ? participationCountsAsVisit(participation, event.startsAt) : false
   }).length
 }
 
