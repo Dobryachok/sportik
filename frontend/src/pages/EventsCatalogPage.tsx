@@ -62,7 +62,7 @@ export function EventsCatalogPage() {
   const createTo = `${type === 'tournament' ? '/create-event?type=tournament' : '/create-event'}${requestedSportId ? `${type === 'tournament' ? '&' : '?'}sport=${encodeURIComponent(requestedSportId)}` : ''}`
 
   return (
-    <div className="mx-auto min-w-0 max-w-full md:max-w-5xl">
+    <div className="page-frame">
       <PageHeader title={sport ? sport.name : 'События'} back right={<CityChooser />} />
       <p className="-mt-2 mb-5 text-sm text-muted">{contextTitle ? `${contextTitle}: выберите дату и район` : 'Выберите дату и район, чтобы найти игру'}</p>
 

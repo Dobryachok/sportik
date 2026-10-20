@@ -45,11 +45,86 @@ export const reverseGeocode = (latitude: number, longitude: number) => request<{
 export const suggestAddresses = (query: string, city?: string, signal?: AbortSignal) => request<LocationSuggestion[]>(`/geo/suggest?query=${encodeURIComponent(query)}${city ? `&city=${encodeURIComponent(city)}` : ''}`, { signal })
 export const fetchEvent = (eventId: string) => request<Event>(`/events/${encodeURIComponent(eventId)}`)
 export const fetchUser = (userId: string) => request<User>(`/users/${encodeURIComponent(userId)}`)
+export const toggleUserFollow = (userId: string) => request<{ active: boolean }>(`/users/${encodeURIComponent(userId)}/follow`, { method: 'POST' })
+export const requestSport = (name: string) => request<{ id: string; status: 'pending' }>('/sports/requests', { method: 'POST', body: JSON.stringify({ name }) })
+export interface PendingSport { id: string; name: string; slug: string; createdAt: string; requestedById?: string; requestedByName?: string }
+
+export interface OrganizationApplicationInput {
+  name: string
+  description: string
+  city: string
+  latitude: number
+  longitude: number
+  email?: string
+  phone?: string
+  website?: string
+  comment?: string
+}
+
+export interface OwnedOrganization {
+  id: string
+  name: string
+  description: string
+  city: string
+  latitude: number
+  longitude: number
+  email?: string | null
+  phone?: string | null
+  website?: string | null
+  status: 'pending' | 'approved' | 'rejected'
+  role: 'owner' | 'member'
+  applicationComment?: string | null
+  reviewComment?: string | null
+  reviewedAt?: string | null
+}
+
+export interface PendingOrganization extends OrganizationApplicationInput {
+  id: string
+  requestedById: string
+  requestedByName: string
+  createdAt: string
+}
+
+export interface PublicOrganization {
+  id: string
+  name: string
+  description: string
+  city: string
+  latitude: number
+  longitude: number
+  email?: string | null
+  phone?: string | null
+  website?: string | null
+  events: Event[]
+}
+
+export interface AdminEvent {
+  id: string
+  title: string
+  city: string
+  startsAt: string
+  status: 'published' | 'unpublished'
+  organizerId: string
+  organizerName: string
+  organizationId?: string | null
+  organizationName?: string | null
+}
+
+export const requestOrganization = (input: OrganizationApplicationInput) => request<{ id: string; status: 'pending' }>('/organizations/applications', { method: 'POST', body: JSON.stringify(input) })
+export const fetchMyOrganizations = () => request<OwnedOrganization[]>('/organizations/mine')
+export const fetchPendingOrganizations = () => request<PendingOrganization[]>('/admin/organizations')
+export const reviewOrganization = (organizationId: string, decision: 'approved' | 'rejected', comment = '') => request<{ id: string; status: string }>(`/admin/organizations/${encodeURIComponent(organizationId)}`, { method: 'PATCH', body: JSON.stringify({ decision, comment }) })
+export const fetchOrganization = (organizationId: string) => request<PublicOrganization>(`/organizations/${encodeURIComponent(organizationId)}`)
+export const fetchAdminEvents = (status: 'published' | 'unpublished' = 'published') => request<AdminEvent[]>(`/admin/events?status_value=${status.toUpperCase()}`)
+export const moderateEvent = (eventId: string, action: 'unpublish' | 'remove', reason = '') => request<{ id: string; status: 'unpublished' }>(`/admin/events/${encodeURIComponent(eventId)}/moderation`, { method: 'PATCH', body: JSON.stringify({ action, reason }) })
+export const fetchPendingSports = () => request<PendingSport[]>('/admin/sports')
+export const reviewSport = (sportId: string, decision: 'approved' | 'rejected') => request<{ id: string; status: string }>(`/admin/sports/${encodeURIComponent(sportId)}`, { method: 'PATCH', body: JSON.stringify({ decision }) })
 export const fetchEventParticipants = (eventId: string) => request<User[]>(`/events/${encodeURIComponent(eventId)}/participants`)
 export const fetchComments = (eventId: string) => request<Comment[]>(`/events/${encodeURIComponent(eventId)}/comments`)
 export const createEvent = (input: CreateEventInput) => request<{ id: string }>('/events', { method: 'POST', body: JSON.stringify(input) })
 export const updateEvent = (eventId: string, input: CreateEventInput) => request<{ id: string }>(`/events/${encodeURIComponent(eventId)}`, { method: 'PATCH', body: JSON.stringify(input) })
 export const joinEvent = (eventId: string) => request<{ status: 'confirmed' | 'pending' }>(`/events/${encodeURIComponent(eventId)}/join`, { method: 'POST' })
+export const leaveEvent = (eventId: string) => request<void>(`/events/${encodeURIComponent(eventId)}/join`, { method: 'DELETE' })
 export const addComment = (eventId: string, text: string) => request<{ created: boolean }>(`/events/${encodeURIComponent(eventId)}/comments`, { method: 'POST', body: JSON.stringify({ text }) })
 export const dismissNotification = (notificationId: string) => request<void>(`/notifications/${encodeURIComponent(notificationId)}/dismiss`, { method: 'PATCH' })
 export const reviewParticipation = (participationId: string, decision: 'confirmed' | 'rejected') => request<{ status: 'confirmed' | 'rejected' }>(`/participations/${encodeURIComponent(participationId.replace(/^part-/, ''))}/review?decision=${decision}`, { method: 'POST' })

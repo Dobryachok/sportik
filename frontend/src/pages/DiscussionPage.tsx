@@ -15,9 +15,15 @@ function authorColor(authorId: string) {
 
 export function DiscussionPage() {
   const { id } = useParams()
-  const { state, currentUser, postComment, refreshComments } = useAppData()
+  const { state, currentUser, postComment, refreshComments, mergeComment } = useAppData()
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
+  const [socketReady, setSocketReady] = useState(false)
+  const [socketCanWrite, setSocketCanWrite] = useState<boolean | null>(null)
+  const [chatError, setChatError] = useState('')
+  const [eventUnpublished, setEventUnpublished] = useState(false)
+  const socketRef = useRef<WebSocket | null>(null)
+  const pendingMessageRef = useRef<{ id: string; text: string } | null>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
   const stickToBottomRef = useRef(true)
   const event = state.events.find((item) => item.id === id)
@@ -28,28 +34,65 @@ export function DiscussionPage() {
   useEffect(() => {
     if (!id) return
     let disposed = false
-    let running = false
-    const reload = async () => {
-      if (disposed || running || document.visibilityState === 'hidden') return
-      running = true
-      const list = messageListRef.current
-      stickToBottomRef.current = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 96
-      try {
-        await refreshComments(id)
-      } finally {
-        running = false
+    let reconnectTimer: number | undefined
+    const apiBase = import.meta.env.VITE_API_BASE_URL || window.location.origin
+    const connect = () => {
+      const endpoint = new URL(apiBase, window.location.origin)
+      endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:'
+      endpoint.pathname = `${endpoint.pathname.replace(/\/$/, '')}/api/v1/events/${encodeURIComponent(id)}/ws`
+      const socket = new WebSocket(endpoint.toString())
+      socketRef.current = socket
+      socket.onopen = () => { if (!disposed) { setSocketReady(true); setChatError('') } }
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(String(event.data)) as {
+            type?: string; canWrite?: boolean; detail?: string; clientMessageId?: string
+            comment?: { id: string; eventId: string; authorId: string; text: string; kind?: 'MESSAGE' | 'PARTICIPANT_JOINED' | 'PARTICIPANT_LEFT'; createdAt: string }
+          }
+          if (payload.type === 'ready') setSocketCanWrite(Boolean(payload.canWrite))
+          if (payload.type === 'comment' && payload.comment) mergeComment(payload.comment)
+          if (payload.type === 'event_unpublished') {
+            setEventUnpublished(true)
+            setSocketCanWrite(false)
+            setChatError(payload.detail || 'Событие снято с публикации, чат закрыт.')
+          }
+          if (payload.type === 'ack' && payload.clientMessageId === pendingMessageRef.current?.id) {
+            const sent = pendingMessageRef.current
+            pendingMessageRef.current = null
+            setText((current) => current === sent.text ? '' : current)
+            setSending(false)
+          }
+          if (payload.type === 'error') {
+            if (!payload.clientMessageId || payload.clientMessageId === pendingMessageRef.current?.id) {
+              pendingMessageRef.current = null
+              setSending(false)
+            }
+            setChatError(payload.detail || 'Не удалось отправить сообщение.')
+          }
+        } catch { /* ignore malformed real-time messages */ }
       }
+      socket.onclose = (closeEvent) => {
+        if (disposed) return
+        pendingMessageRef.current = null
+        setSending(false)
+        setSocketReady(false)
+        if (closeEvent.code === 4403 || closeEvent.code === 4404) {
+          setChatError(closeEvent.code === 4404 ? 'Чат этого события не найден.' : 'Не удалось подключиться к чату.')
+          return
+        }
+        reconnectTimer = window.setTimeout(connect, 1500)
+      }
+      socket.onerror = () => { if (!disposed) setSocketReady(false) }
     }
-    const onVisibility = () => { if (document.visibilityState === 'visible') void reload() }
-    void reload()
-    const timer = window.setInterval(() => void reload(), 5000)
-    document.addEventListener('visibilitychange', onVisibility)
+    void refreshComments(id)
+    connect()
     return () => {
       disposed = true
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVisibility)
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+      socketRef.current?.close()
+      socketRef.current = null
     }
-  }, [id, refreshComments])
+  }, [id, refreshComments, mergeComment])
 
   useEffect(() => {
     if (!stickToBottomRef.current) return
@@ -60,14 +103,28 @@ export function DiscussionPage() {
   if (!event) return <p className="text-muted">Событие не найдено</p>
 
   const send = async () => {
-    if (!text.trim() || !canWrite) return
+    const message = text.trim()
+    if (!message || sending || !canWrite || socketCanWrite === false) return
+    setChatError('')
     setSending(true)
-    if (await postComment(event.id, text)) setText('')
+    const socket = socketRef.current
+    if (socketReady && socket?.readyState === WebSocket.OPEN) {
+      const clientMessageId = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      pendingMessageRef.current = { id: clientMessageId, text: message }
+      try {
+        socket.send(JSON.stringify({ type: 'message', clientMessageId, text: message }))
+        return
+      } catch {
+        pendingMessageRef.current = null
+      }
+    }
+    const sent = await postComment(event.id, message)
+    if (sent) setText((current) => current === message ? '' : current)
     setSending(false)
   }
 
-  const composer = currentUser ? (
-    canWrite ? <>
+  const composer = eventUnpublished ? <p className="rounded-xl bg-card-elevated px-4 py-3 text-center text-sm text-muted">Событие снято с публикации. Новые сообщения недоступны.</p> : currentUser ? (
+    canWrite && socketCanWrite !== false ? <>
       <div className="flex gap-2 rounded-full bg-card-elevated p-2 md:bg-bg">
         <input value={text} onChange={(item) => setText(item.target.value)} placeholder="Написать сообщение" className="flex-1 bg-transparent px-3 text-base outline-none md:text-sm" onKeyDown={(item) => { if (item.key === 'Enter' && !item.shiftKey) { item.preventDefault(); void send() } }} />
         <button type="button" disabled={sending || !text.trim()} onClick={() => void send()} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent text-white disabled:opacity-50" aria-label="Отправить"><Send size={18} /></button>
@@ -77,7 +134,7 @@ export function DiscussionPage() {
   ) : <p className="rounded-xl bg-card-elevated px-4 py-3 text-center text-sm text-muted"><Link to="/login" state={{ from: `/events/${event.id}/discussion` }} className="text-accent">Войдите</Link>, чтобы участвовать в обсуждении.</p>
 
   return (
-    <div className="mx-auto flex h-[calc(100dvh-var(--app-nav-height)-4rem)] min-w-0 max-w-full flex-col md:h-[calc(100dvh-7rem)] md:max-w-5xl">
+    <div className="page-frame flex h-[calc(100dvh-var(--app-nav-height)-4rem)] flex-col md:h-[calc(100dvh-7rem)]">
       <PageHeader title="Чат события" back />
       <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.5rem] border border-white/[0.08] bg-card">
         <header className="shrink-0 border-b border-white/[0.08] px-4 py-3.5 md:px-5 md:py-4">
@@ -94,6 +151,7 @@ export function DiscussionPage() {
         <div ref={messageListRef} onScroll={() => { const list = messageListRef.current; if (list) stickToBottomRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 96 }} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 md:px-5 md:py-5">
           {comments.length === 0 && <p className="py-10 text-center text-sm text-muted">Начните обсуждение события.</p>}
           {comments.map((comment) => {
+            if (comment.kind === 'PARTICIPANT_JOINED' || comment.kind === 'PARTICIPANT_LEFT') return <div key={comment.id} className="flex items-center gap-3 py-1 text-center before:h-px before:flex-1 before:bg-white/10 after:h-px after:flex-1 after:bg-white/10"><p className="max-w-[75%] text-xs text-muted">{comment.text}</p></div>
             const author = state.users.find((item) => item.id === comment.authorId)
             const mine = comment.authorId === currentUser?.id
             const profileLink = `/users/${comment.authorId}`
@@ -111,6 +169,7 @@ export function DiscussionPage() {
           })}
         </div>
         <div className="shrink-0 border-t border-white/[0.08] bg-card px-4 py-3 md:px-5 md:py-4" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))' }}>
+          {chatError && <p role="alert" className="mb-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning">{chatError}</p>}
           {composer}
         </div>
       </section>

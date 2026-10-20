@@ -34,7 +34,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080,http://localhost:8000}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       GEO_CONTACT_EMAIL: ${GEO_CONTACT_EMAIL:-}
-      GEO_USER_AGENT: ${GEO_USER_AGENT:-SportVmeste/1.0}
+      GEO_USER_AGENT: ${GEO_USER_AGENT:-Sportik/1.0}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
     depends_on:
       postgres:
         condition: service_healthy

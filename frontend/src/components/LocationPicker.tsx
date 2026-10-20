@@ -51,7 +51,9 @@ export function LocationPicker({ address, city, district, onChange, required = f
   const choose = (item: LocationSuggestion) => {
     onChange({
       address: item.address,
-      city: item.city || city,
+      // A suggestion is searched inside the selected city; do not unexpectedly
+      // switch the event to a neighbouring municipality returned by Nominatim.
+      city,
       district: item.district,
       latitude: item.latitude,
       longitude: item.longitude,

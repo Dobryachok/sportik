@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { CityChooser } from '../components/CityChooser'
@@ -6,6 +6,7 @@ import { LocationPicker } from '../components/LocationPicker'
 import { PageHeader } from '../components/PageHeader'
 import { PrimaryButton } from '../components/PrimaryButton'
 import { StarPicker } from '../components/StarRating'
+import { fetchMyOrganizations, type OwnedOrganization } from '../data/api'
 import type { Event, JoinMode } from '../data/types'
 
 function localDateTime(iso: string) {
@@ -33,6 +34,16 @@ export function EditEventPage() {
   const [joinMode, setJoinMode] = useState<JoinMode>(event?.joinMode ?? 'open')
   const [level, setLevel] = useState(event?.level ?? 1)
   const [busy, setBusy] = useState(false)
+  const [ownedOrganizations, setOwnedOrganizations] = useState<OwnedOrganization[]>([])
+  const [organizationId, setOrganizationId] = useState(event?.organizationId ?? '')
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchMyOrganizations().then((items) => {
+      if (!cancelled) setOwnedOrganizations(items.filter((item) => item.status === 'approved' && item.role === 'owner'))
+    }).catch(() => { if (!cancelled) setOwnedOrganizations([]) })
+    return () => { cancelled = true }
+  }, [])
 
   if (!event) return <p className="text-muted">Событие не найдено. <Link to="/events" className="text-accent">Открыть каталог</Link></p>
   if (event.organizerUserId !== currentUser?.id) return <p className="text-muted">Редактировать событие может только организатор.</p>
@@ -50,19 +61,25 @@ export function EditEventPage() {
     const ok = await editEvent(event.id, {
       title, description, address, city, district: district || undefined, sportName,
       startsAt: new Date(startsAt).toISOString(), capacity, joinMode, level, minAge: event.minAge,
-      eventType, latitude, longitude,
+      eventType, latitude, longitude, organizationId: organizationId || undefined,
     })
     setBusy(false)
     if (ok) navigate(`/events/${event.id}`)
   }
 
   return (
-    <div className="mx-auto max-w-xl">
+    <div className="page-frame">
       <PageHeader title="Изменить событие" back />
-      <form onSubmit={(form) => void save(form)} className="space-y-4">
+      <form onSubmit={(form) => void save(form)} className="mx-auto max-w-2xl space-y-4">
         <label className="block text-sm text-muted">Формат
           <select value={eventType} onChange={(form) => setEventType(form.target.value as NonNullable<Event['eventType']>)} className="mt-1 w-full rounded-xl bg-card px-3 py-2.5 text-white"><option value="game">Игра</option><option value="training">Тренировка</option><option value="tournament">Турнир</option></select>
         </label>
+        {ownedOrganizations.length > 0 && <label className="block text-sm text-muted">Публикует
+          <select value={organizationId} onChange={(form) => setOrganizationId(form.target.value)} className="mt-1 w-full rounded-xl bg-card px-3 py-2.5 text-white">
+            <option value="">От своего имени</option>
+            {ownedOrganizations.map((organization) => <option key={organization.id} value={organization.id}>От имени «{organization.name}»</option>)}
+          </select>
+        </label>}
         <label className="block text-sm text-muted">Название
           <input required maxLength={255} value={title} onChange={(form) => setTitle(form.target.value)} className="mt-1 w-full rounded-xl bg-card px-3 py-2.5 text-white" />
         </label>
@@ -70,7 +87,10 @@ export function EditEventPage() {
           <textarea rows={4} value={description} onChange={(form) => setDescription(form.target.value)} className="mt-1 w-full rounded-xl bg-card px-3 py-2.5 text-white" />
         </label>
         <label className="block text-sm text-muted">Вид спорта
-          <input required maxLength={100} value={sportName} onChange={(form) => setSportName(form.target.value)} className="mt-1 w-full rounded-xl bg-card px-3 py-2.5 text-white" />
+          <select required value={sportName} onChange={(form) => setSportName(form.target.value)} className="mt-1 w-full rounded-xl bg-card px-3 py-2.5 text-white">
+            {sportName && !state.sports.some((sport) => sport.name === sportName) && <option value={sportName}>{sportName} — больше не доступен</option>}
+            {state.sports.map((sport) => <option key={sport.id} value={sport.name}>{sport.name}</option>)}
+          </select>
         </label>
         <div className="flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2.5 text-sm text-muted">
           <span>Город: <span className="text-white">{city || 'не выбран'}</span></span>

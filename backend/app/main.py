@@ -1,4 +1,4 @@
-"""Authenticated PostgreSQL API for СпортВместе."""
+"""Authenticated PostgreSQL API for Спортик."""
 import asyncio
 import hashlib
 import json
@@ -14,10 +14,10 @@ from uuid import uuid4
 
 import httpx
 from PIL import Image, UnidentifiedImageError
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, ValidationError, field_validator
 from pwdlib import PasswordHash
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
@@ -35,6 +35,8 @@ password_hasher = PasswordHash.recommended()
 _dummy_password_hash = password_hasher.hash('Not-a-real-password-9')
 _geo_lock = asyncio.Lock()
 _geo_last_request = 0.0
+_chat_connections: dict[str, set[WebSocket]] = {}
+_chat_connections_lock = asyncio.Lock()
 
 
 @asynccontextmanager
@@ -45,9 +47,9 @@ async def lifespan(_app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title='СпортВместе API', lifespan=lifespan)
+app = FastAPI(title='Спортик API', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins, allow_credentials=True,
-                   allow_methods=['GET', 'POST', 'PATCH', 'OPTIONS'], allow_headers=['Content-Type'])
+                   allow_methods=['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'], allow_headers=['Content-Type'])
 
 
 async def db_session():
@@ -97,7 +99,7 @@ def social_links(value):
 
 def public_user(row):
     """Projection deliberately safe to show from event lists and participant cards."""
-    return {
+    result = {
         'id': row['id'],
         'name': row['name'],
         'city': row.get('city') or '',
@@ -111,6 +113,17 @@ def public_user(row):
             'followers': int(row.get('followersCount') or 0),
         },
     }
+    # Public profiles intentionally expose age, not an exact date of birth.
+    age = row.get('age')
+    if age is None and row.get('birthDate') is not None:
+        age = age_from_birth_date(row['birthDate'])
+    if age is not None:
+        result['age'] = int(age)
+    for key in ('maritalStatus', 'hasCar', 'workSchedule'):
+        if row.get(key) is not None:
+            result[key] = row[key]
+    return result
+
 
 
 def self_user(row):
@@ -169,8 +182,11 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
         p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
-        CASE WHEN EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=u.id AND om.role='OWNER')
-             THEN 'organization' ELSE 'user' END AS role
+        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
+        (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount",
+        CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
+             WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization'
+             ELSE 'user' END AS role
         FROM auth_sessions s JOIN users u ON u.id=s.user_id
         LEFT JOIN user_profiles p ON p.user_id=u.id
         WHERE s.token_hash=:hash AND s.revoked_at IS NULL AND s.expires_at > now() AND u.status='ACTIVE'"""),
@@ -181,7 +197,15 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
 
 
 async def require_user(request: Request, user=Depends(current_user)):
-    await csrf_origin(request)
+    # Origin validation is required for cookie-authenticated state changes, not reads.
+    if request.method not in {'GET', 'HEAD', 'OPTIONS'}:
+        await csrf_origin(request)
+    return user
+
+
+async def require_admin(user=Depends(require_user)):
+    if user.get('role') != 'admin':
+        raise HTTPException(status.HTTP_403_FORBIDDEN, 'Administrator access is required')
     return user
 
 
@@ -235,6 +259,19 @@ async def create_login(session: AsyncSession, user_id: int):
     return raw
 
 
+async def grant_configured_admin_role(session: AsyncSession, user_id: int, email: str):
+    """Bootstrap only the explicitly configured administrator identity."""
+    configured = settings.admin_email.strip().lower()
+    if not configured or email.strip().lower() != configured:
+        return False
+    role_id = await session.scalar(text("SELECT id FROM roles WHERE name='ADMIN'"))
+    if not role_id:
+        return False
+    await session.execute(text('''INSERT INTO user_roles(user_id,role_id)
+        VALUES (:user,:role) ON CONFLICT DO NOTHING'''), {'user': user_id, 'role': role_id})
+    return True
+
+
 @app.post('/api/v1/auth/register', status_code=status.HTTP_201_CREATED)
 async def register(payload: Credentials, request: Request, response: Response, session: AsyncSession = Depends(db_session)):
     await throttle_auth(payload.email, 'register', 5)
@@ -254,8 +291,9 @@ async def register(payload: Credentials, request: Request, response: Response, s
         if role_id:
             await session.execute(text('INSERT INTO user_roles(user_id,role_id) VALUES (:user,:role) ON CONFLICT DO NOTHING'),
                                   {'user': user_id, 'role': role_id})
+        is_admin = await grant_configured_admin_role(session, user_id, payload.email)
         token = await create_login(session, user_id)
-    result = self_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'user', 'avatarUrl': None, 'bio': ''})
+    result = self_user({'id': public_id, 'name': payload.name, 'city': '', 'role': 'admin' if is_admin else 'user', 'avatarUrl': None, 'bio': ''})
     set_session(response, token)
     return result
 
@@ -268,7 +306,12 @@ async def login(payload: Credentials, request: Request, response: Response, sess
         p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",
         p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
-        (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount"
+        (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
+        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
+        (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount",
+        CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
+             WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization'
+             ELSE 'user' END AS role
         FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
         WHERE lower(u.email)=:email AND u.status='ACTIVE' '''),
                                   {'email': payload.email})).mappings().first()
@@ -281,8 +324,9 @@ async def login(payload: Credentials, request: Request, response: Response, sess
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, 'Invalid email or password')
     await session.commit()
     async with session.begin():
+        is_admin = await grant_configured_admin_role(session, user['id'], payload.email)
         token = await create_login(session, user['id'])
-    result = self_user({**dict(user), 'id': user['public_id'], 'role': 'user'})
+    result = self_user({**dict(user), 'id': user['public_id'], 'role': 'admin' if is_admin else user['role']})
     set_session(response, token)
     return result
 
@@ -460,22 +504,61 @@ async def media(media_id: str, session: AsyncSession = Depends(db_session)):
     return FileResponse(path, media_type=item['content_type'], headers={'X-Content-Type-Options': 'nosniff'})
 
 
-async def find_public_user(session: AsyncSession, public_id: str):
-    user = (await session.execute(text('''SELECT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,
+async def find_public_user(session: AsyncSession, public_id: str, viewer_id: int | None = None):
+    user = (await session.execute(text('''SELECT u.id AS db_id,u.public_id AS id,u.name,COALESCE(u.city,'') AS city,
         u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,p.social_links AS "socialLinks",
+        p.marital_status AS "maritalStatus",p.has_car AS "hasCar",p.work_schedule AS "workSchedule",
+        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
-        CASE WHEN EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=u.id AND om.role='OWNER')
-          THEN 'organization' ELSE 'user' END AS role
+        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
+        (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount",
+        CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
+          WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization'
+          ELSE 'user' END AS role
         FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id
         WHERE u.public_id=:id AND u.status='ACTIVE' '''), {'id': public_id})).mappings().first()
     if not user:
         raise HTTPException(404, 'User not found')
-    return public_user(dict(user))
+    result = public_user(dict(user))
+    if viewer_id is not None and viewer_id != user['db_id']:
+        result['viewerFollows'] = bool(await session.scalar(text('''SELECT 1 FROM user_follows
+            WHERE follower_id=:viewer AND followed_id=:target'''), {'viewer': viewer_id, 'target': user['db_id']}))
+    return result
 
 
 @app.get('/api/v1/users/{user_id}')
-async def user_profile(user_id: str, session: AsyncSession = Depends(db_session)):
-    return await find_public_user(session, user_id)
+async def user_profile(user_id: str, request: Request, session: AsyncSession = Depends(db_session)):
+    viewer = None
+    try:
+        viewer = await current_user(request, session)
+    except HTTPException as exc:
+        if exc.status_code != 401:
+            raise
+    return await find_public_user(session, user_id, viewer['db_id'] if viewer else None)
+
+
+@app.post('/api/v1/users/{user_id}/follow')
+async def toggle_user_follow(user_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    await session.commit()
+    async with session.begin():
+        target = (await session.execute(text('''SELECT id FROM users
+            WHERE public_id=:id AND status='ACTIVE' FOR SHARE'''), {'id': user_id})).mappings().first()
+        if not target:
+            raise HTTPException(404, 'User not found')
+        if target['id'] == user['db_id']:
+            raise HTTPException(422, 'You cannot follow yourself')
+        exists = await session.scalar(text('''SELECT 1 FROM user_follows
+            WHERE follower_id=:follower AND followed_id=:followed'''),
+            {'follower': user['db_id'], 'followed': target['id']})
+        if exists:
+            await session.execute(text('''DELETE FROM user_follows
+                WHERE follower_id=:follower AND followed_id=:followed'''),
+                {'follower': user['db_id'], 'followed': target['id']})
+        else:
+            await session.execute(text('''INSERT INTO user_follows(follower_id,followed_id)
+                VALUES (:follower,:followed)'''), {'follower': user['db_id'], 'followed': target['id']})
+    await restart_redis_cache()
+    return {'active': not bool(exists)}
 
 
 async def event_rows(session, city: str | None, public_only=True):
@@ -485,7 +568,7 @@ async def event_rows(session, city: str | None, public_only=True):
         where += ' AND lower(e.city)=lower(:city)'
         params['city'] = city.strip()
     events = await rows(session, f'''SELECT e.id AS internal_id,e.public_id AS id,s.public_id AS "sportId",u.public_id AS "organizerUserId",
-      o.public_id AS "organizationId",e.title,COALESCE(e.description,'') AS description,
+      o.public_id AS "organizationId",o.name AS "organizationName",e.title,COALESCE(e.description,'') AS description,
       COALESCE(e.location,'') AS address,e.district,e.city,e.start_at AS "startsAt",e.capacity,
       e.join_mode AS "joinMode",CASE WHEN e.status='PUBLISHED' THEN 'published' ELSE 'unpublished' END AS status,e.level,
       e.min_age AS "minAge",e.image_url AS "imageUrl",e.rating,e.event_type AS "eventType",
@@ -503,8 +586,9 @@ async def event_rows(session, city: str | None, public_only=True):
 
 async def notification_rows(session: AsyncSession, user_id: int):
     items = await rows(session, '''SELECT 'n-' || n.id AS id,n.type,n.title,n.message AS body,n.is_read AS "isRead",
-       n.created_at AS "createdAt",e.public_id AS "eventId",s.name AS "eventTag",e.start_at AS "eventStart"
-       FROM notifications n LEFT JOIN events e ON e.id=n.event_id LEFT JOIN sports s ON s.id=e.sport_id
+       n.created_at AS "createdAt",e.public_id AS "eventId",o.public_id AS "organizationId",s.name AS "eventTag",e.start_at AS "eventStart"
+       FROM notifications n LEFT JOIN events e ON e.id=n.event_id LEFT JOIN organizations o ON o.id=n.organization_id
+       LEFT JOIN sports s ON s.id=e.sport_id
        WHERE n.user_id=:user AND n.dismissed_at IS NULL ORDER BY n.created_at DESC,n.id DESC''', {'user': user_id})
     for item in items:
         item['createdAt'] = timestamp(item['createdAt'])
@@ -513,9 +597,17 @@ async def notification_rows(session: AsyncSession, user_id: int):
         else:
             item.pop('eventStart', None)
         if item.get('eventId'):
-            item['linkUrl'] = f"/events/{item['eventId']}"
-            item['linkText'] = 'Открыть событие'
+            if item.get('type') == 'event_moderation':
+                item['linkUrl'] = '/my-events'
+                item['linkText'] = 'Мои события'
+            else:
+                item['linkUrl'] = f"/events/{item['eventId']}"
+                item['linkText'] = 'Открыть событие'
+        elif item.get('organizationId'):
+            item['linkUrl'] = '/org'
+            item['linkText'] = 'Открыть организацию'
         item.pop('eventId', None)
+        item.pop('organizationId', None)
     return items
 
 
@@ -535,7 +627,10 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",
        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
        (SELECT count(*)::integer FROM events owner_events WHERE owner_events.organizer_id=u.id) AS "eventCount",
-       CASE WHEN EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id=u.id AND om.role='OWNER') THEN 'organization' ELSE 'user' END AS role
+       (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
+       (SELECT count(*)::integer FROM user_follows f WHERE f.followed_id=u.id) AS "followersCount",
+       CASE WHEN EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.name='ADMIN') THEN 'admin'
+         WHEN EXISTS (SELECT 1 FROM organization_members om JOIN organizations o ON o.id=om.organization_id WHERE om.user_id=u.id AND om.role='OWNER' AND o.status='APPROVED') THEN 'organization' ELSE 'user' END AS role
        FROM users u LEFT JOIN user_profiles p ON p.user_id=u.id WHERE u.id IN (
         SELECT organizer_id FROM events WHERE public_id = ANY(:ids)
         UNION SELECT c.user_id FROM event_comments c JOIN events e ON e.id=c.event_id WHERE e.public_id=ANY(:ids) AND c.status='VISIBLE'
@@ -547,8 +642,9 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
        LEFT JOIN organization_members m ON m.organization_id=o.id AND m.role='OWNER' LEFT JOIN users owner ON owner.id=m.user_id
        WHERE e.public_id=ANY(:ids) ORDER BY o.public_id''', params)
     sports = await rows(session, '''SELECT s.public_id AS id,s.name,s.slug,count(e.id)::integer AS "eventCount" FROM sports s
-       JOIN events e ON e.sport_id=s.id AND e.status='PUBLISHED' AND e.public_id=ANY(:ids) GROUP BY s.id ORDER BY s.id''', params)
-    comments = await rows(session, '''SELECT 'c-' || c.id AS id,e.public_id AS "eventId",u.public_id AS "authorId",c.text,c.created_at AS "createdAt"
+       JOIN events e ON e.sport_id=s.id AND e.status='PUBLISHED' AND e.public_id=ANY(:ids)
+       WHERE s.status='APPROVED' GROUP BY s.id ORDER BY s.id''', params)
+    comments = await rows(session, '''SELECT 'c-' || c.id AS id,e.public_id AS "eventId",u.public_id AS "authorId",c.text,c.kind,c.created_at AS "createdAt"
        FROM event_comments c JOIN events e ON e.id=c.event_id JOIN users u ON u.id=c.user_id
        WHERE e.public_id=ANY(:ids) AND c.status='VISIBLE' ORDER BY c.id''', params)
     for comment in comments: comment['createdAt'] = timestamp(comment['createdAt'])
@@ -558,7 +654,7 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
     if user:
         notifications = await notification_rows(session, user['db_id'])
         participations = await rows(session, '''SELECT 'part-' || r.id AS id,e.public_id AS "eventId",u.public_id AS "userId",
-           CASE r.status WHEN 'REGISTERED' THEN 'confirmed' WHEN 'PENDING' THEN 'pending' ELSE 'rejected' END AS status,r.registered_at AS "createdAt"
+           CASE r.status WHEN 'REGISTERED' THEN 'confirmed' WHEN 'PENDING' THEN 'pending' WHEN 'CANCELLED' THEN 'cancelled' ELSE 'rejected' END AS status,r.registered_at AS "createdAt"
            FROM event_registrations r JOIN events e ON e.id=r.event_id JOIN users u ON u.id=r.user_id
            WHERE e.public_id=ANY(:ids) AND (r.user_id=:user_id OR e.organizer_id=:user_id) ORDER BY r.id''', params)
         for item in participations: item['createdAt'] = timestamp(item['createdAt'])
@@ -643,6 +739,53 @@ async def dismiss_notification(notification_id: str, user=Depends(require_user),
     await restart_redis_cache()
 
 
+class OrganizationApplicationInput(BaseModel):
+    name: str = Field(min_length=2, max_length=255)
+    description: str = Field(default='', max_length=10000)
+    city: str = Field(min_length=1, max_length=150)
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=50)
+    website: str | None = Field(default=None, max_length=500)
+    comment: str = Field(default='', max_length=4000)
+
+    @field_validator('name', 'city', 'description', 'phone', 'website', 'comment')
+    @classmethod
+    def clean_organization_text(cls, value):
+        return value.strip() if value is not None else value
+
+    @field_validator('website')
+    @classmethod
+    def organization_website(cls, value):
+        if not value:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in {'https', 'http'} or not parsed.netloc:
+            raise ValueError('Website must be an http(s) URL')
+        return value
+
+
+class OrganizationReviewInput(BaseModel):
+    decision: str = Field(pattern='^(approved|rejected)$')
+    comment: str = Field(default='', max_length=4000)
+
+    @field_validator('comment')
+    @classmethod
+    def clean_comment(cls, value):
+        return value.strip()
+
+
+class EventModerationInput(BaseModel):
+    action: str = Field(pattern='^(unpublish|remove)$')
+    reason: str = Field(default='', max_length=4000)
+
+    @field_validator('reason')
+    @classmethod
+    def clean_reason(cls, value):
+        return value.strip()
+
+
 class EventInput(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     description: str = Field(default='', max_length=10000)
@@ -656,6 +799,7 @@ class EventInput(BaseModel):
     sportName: str = Field(min_length=1, max_length=100)
     minAge: int | None = Field(default=None, ge=0, le=120)
     eventType: str = Field(default='game', pattern='^(game|training|tournament)$')
+    organizationId: str | None = Field(default=None, min_length=3, max_length=80)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
 
@@ -675,6 +819,236 @@ class EventInput(BaseModel):
         return normalized
 
 
+class SportRequestInput(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+
+    @field_validator('name')
+    @classmethod
+    def clean_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError('Sport name cannot be blank')
+        return value
+
+
+class SportReviewInput(BaseModel):
+    decision: str = Field(pattern='^(approved|rejected)$')
+
+
+@app.post('/api/v1/sports/requests', status_code=status.HTTP_201_CREATED)
+async def request_sport(payload: SportRequestInput, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    await session.commit()
+    async with session.begin():
+        existing = (await session.execute(text('''SELECT id,public_id,status,requested_by FROM sports
+            WHERE lower(name)=lower(:name) FOR UPDATE'''), {'name': payload.name})).mappings().first()
+        if existing:
+            if existing['status'] == 'APPROVED':
+                raise HTTPException(409, 'This sport is already available')
+            if existing['status'] == 'PENDING':
+                if existing['requested_by'] == user['db_id']:
+                    return {'id': existing['public_id'], 'status': 'pending'}
+                raise HTTPException(409, 'This sport is already awaiting moderation')
+            # The name is unique. Re-open a rejected suggestion instead of making
+            # a second row that would violate the catalog's unique-name constraint.
+            sport_id = existing['public_id']
+            await session.execute(text('''UPDATE sports
+                SET status='PENDING',requested_by=:user,reviewed_by=NULL,reviewed_at=NULL
+                WHERE id=:id'''), {'user': user['db_id'], 'id': existing['id']})
+        else:
+            sport_id = 'sp-' + uuid4().hex[:12]
+            await session.execute(text('''INSERT INTO sports(public_id,name,slug,status,requested_by)
+                VALUES (:id,:name,:slug,'PENDING',:user)'''), {
+                    'id': sport_id, 'name': payload.name, 'slug': 'sport-' + uuid4().hex[:12], 'user': user['db_id'],
+                })
+        admins = await rows(session, '''SELECT DISTINCT ur.user_id FROM user_roles ur
+            JOIN roles r ON r.id=ur.role_id WHERE r.name='ADMIN' ''')
+        for admin in admins:
+            await session.execute(text('''INSERT INTO notifications(user_id,type,title,message)
+                VALUES (:user,'sport_review','Новый вид спорта',:message)'''), {
+                    'user': admin['user_id'], 'message': f'На модерацию предложен вид спорта «{payload.name}».',
+                })
+    await restart_redis_cache()
+    return {'id': sport_id, 'status': 'pending'}
+
+
+@app.get('/api/v1/admin/sports')
+async def pending_sports(user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    return await rows(session, '''SELECT s.public_id AS id,s.name,s.slug,s.created_at AS "createdAt",
+        u.public_id AS "requestedById",u.name AS "requestedByName" FROM sports s
+        LEFT JOIN users u ON u.id=s.requested_by WHERE s.status='PENDING' ORDER BY s.created_at,s.id''')
+
+
+@app.patch('/api/v1/admin/sports/{sport_id}')
+async def review_sport(sport_id: str, payload: SportReviewInput, user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    await session.commit()
+    async with session.begin():
+        sport = (await session.execute(text('''SELECT id,name,requested_by FROM sports
+            WHERE public_id=:id AND status='PENDING' FOR UPDATE'''), {'id': sport_id})).mappings().first()
+        if not sport:
+            raise HTTPException(404, 'Pending sport not found')
+        status_value = 'APPROVED' if payload.decision == 'approved' else 'REJECTED'
+        await session.execute(text('''UPDATE sports SET status=:status,reviewed_by=:reviewer,reviewed_at=now()
+            WHERE id=:id'''), {'status': status_value, 'reviewer': user['db_id'], 'id': sport['id']})
+        if sport['requested_by']:
+            await session.execute(text('''INSERT INTO notifications(user_id,type,title,message)
+                VALUES (:user,'sport_review',:title,:message)'''), {
+                    'user': sport['requested_by'],
+                    'title': f'Вид спорта «{sport["name"]}» {"одобрен" if status_value == "APPROVED" else "отклонён"}',
+                    'message': 'Теперь его можно выбрать при создании мероприятия.' if status_value == 'APPROVED' else 'Попробуйте уточнить название и отправить другую заявку.',
+                })
+    await restart_redis_cache()
+    return {'id': sport_id, 'status': payload.decision}
+
+
+@app.post('/api/v1/organizations/applications', status_code=status.HTTP_201_CREATED)
+async def request_organization(payload: OrganizationApplicationInput, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    await session.commit()
+    async with session.begin():
+        has_pending = await session.scalar(text('''SELECT 1 FROM organization_members m
+            JOIN organizations o ON o.id=m.organization_id
+            WHERE m.user_id=:user AND m.role='OWNER' AND o.status='PENDING' '''), {'user': user['db_id']})
+        if has_pending:
+            raise HTTPException(409, 'You already have an organization awaiting review')
+        organization_id = 'org-' + uuid4().hex[:12]
+        internal_id = await session.scalar(text('''INSERT INTO organizations(public_id,name,description,city,latitude,longitude,email,phone,website,status)
+            VALUES (:id,:name,:description,:city,:latitude,:longitude,:email,:phone,:website,'PENDING') RETURNING id'''), {
+                'id': organization_id, 'name': payload.name, 'description': payload.description, 'city': payload.city,
+                'latitude': payload.latitude, 'longitude': payload.longitude, 'email': str(payload.email) if payload.email else None,
+                'phone': payload.phone or None, 'website': payload.website or None,
+            })
+        await session.execute(text('''INSERT INTO organization_members(organization_id,user_id,role)
+            VALUES (:organization,:user,'OWNER')'''), {'organization': internal_id, 'user': user['db_id']})
+        await session.execute(text('''INSERT INTO organization_applications(organization_id,submitted_by,status,comment)
+            VALUES (:organization,:user,'PENDING',:comment)'''), {
+                'organization': internal_id, 'user': user['db_id'], 'comment': payload.comment,
+            })
+        admins = await rows(session, '''SELECT DISTINCT ur.user_id FROM user_roles ur
+            JOIN roles r ON r.id=ur.role_id WHERE r.name='ADMIN' ''')
+        for admin in admins:
+            await session.execute(text('''INSERT INTO notifications(user_id,organization_id,type,title,message)
+                VALUES (:user,:organization,'organization_review','Новая заявка организации',:message)'''), {
+                    'user': admin['user_id'], 'organization': internal_id,
+                    'message': f'Организация «{payload.name}» ожидает модерации.',
+                })
+    await restart_redis_cache()
+    return {'id': organization_id, 'status': 'pending'}
+
+
+@app.get('/api/v1/organizations/mine')
+async def my_organizations(user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    items = await rows(session, '''SELECT o.public_id AS id,o.name,COALESCE(o.description,'') AS description,o.city,
+        o.latitude::float AS latitude,o.longitude::float AS longitude,o.email,o.phone,o.website,lower(o.status) AS status,
+        lower(m.role) AS role,a.comment AS "applicationComment",a.review_comment AS "reviewComment",a.reviewed_at AS "reviewedAt"
+        FROM organization_members m JOIN organizations o ON o.id=m.organization_id
+        LEFT JOIN LATERAL (SELECT * FROM organization_applications x WHERE x.organization_id=o.id
+            ORDER BY x.created_at DESC,x.id DESC LIMIT 1) a ON TRUE
+        WHERE m.user_id=:user ORDER BY o.created_at DESC,o.id DESC''', {'user': user['db_id']})
+    for item in items:
+        item['reviewedAt'] = timestamp(item['reviewedAt'])
+    return items
+
+
+@app.get('/api/v1/admin/organizations')
+async def pending_organizations(user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    items = await rows(session, '''SELECT o.public_id AS id,o.name,COALESCE(o.description,'') AS description,o.city,
+        o.latitude::float AS latitude,o.longitude::float AS longitude,o.email,o.phone,o.website,
+        a.comment,u.public_id AS "requestedById",u.name AS "requestedByName",a.created_at AS "createdAt"
+        FROM organization_applications a JOIN organizations o ON o.id=a.organization_id JOIN users u ON u.id=a.submitted_by
+        WHERE a.status='PENDING' AND o.status='PENDING' ORDER BY a.created_at,a.id''')
+    for item in items:
+        item['createdAt'] = timestamp(item['createdAt'])
+    return items
+
+
+@app.patch('/api/v1/admin/organizations/{organization_id}')
+async def review_organization(organization_id: str, payload: OrganizationReviewInput, user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    await session.commit()
+    async with session.begin():
+        application = (await session.execute(text('''SELECT a.id,a.submitted_by,o.id AS organization_id,o.name
+            FROM organization_applications a JOIN organizations o ON o.id=a.organization_id
+            WHERE o.public_id=:id AND a.status='PENDING' AND o.status='PENDING'
+            ORDER BY a.created_at DESC,a.id DESC LIMIT 1 FOR UPDATE OF a,o'''), {'id': organization_id})).mappings().first()
+        if not application:
+            raise HTTPException(404, 'Pending organization application not found')
+        status_value = 'APPROVED' if payload.decision == 'approved' else 'REJECTED'
+        await session.execute(text('''UPDATE organizations SET status=:status,updated_at=now() WHERE id=:id'''),
+                              {'status': status_value, 'id': application['organization_id']})
+        await session.execute(text('''UPDATE organization_applications SET status=:status,reviewed_by=:reviewer,
+            reviewed_at=now(),review_comment=:comment WHERE id=:id'''), {
+                'status': status_value, 'reviewer': user['db_id'], 'comment': payload.comment, 'id': application['id'],
+            })
+        await session.execute(text('''INSERT INTO notifications(user_id,organization_id,type,title,message)
+            VALUES (:user,:organization,'organization_review',:title,:message)'''), {
+                'user': application['submitted_by'], 'organization': application['organization_id'],
+                'title': f'Организация «{application["name"]}» {"одобрена" if status_value == "APPROVED" else "отклонена"}',
+                'message': 'Теперь можно публиковать мероприятия от имени организации.' if status_value == 'APPROVED'
+                    else (payload.comment or 'Заявка отклонена. Уточните данные и отправьте новую заявку.'),
+            })
+    await restart_redis_cache()
+    return {'id': organization_id, 'status': payload.decision}
+
+
+@app.get('/api/v1/organizations/{organization_id}')
+async def organization_profile(organization_id: str, session: AsyncSession = Depends(db_session)):
+    organization = (await session.execute(text('''SELECT public_id AS id,name,COALESCE(description,'') AS description,city,
+        latitude::float AS latitude,longitude::float AS longitude,email,phone,website
+        FROM organizations WHERE public_id=:id AND status='APPROVED' '''), {'id': organization_id})).mappings().first()
+    if not organization:
+        raise HTTPException(404, 'Organization not found')
+    events = [item for item in await event_rows(session, None) if item.get('organizationId') == organization_id]
+    return {**dict(organization), 'events': events}
+
+
+async def approved_owned_organization(session: AsyncSession, public_id: str, user_id: int):
+    organization = (await session.execute(text('''SELECT o.id,o.public_id,o.name FROM organizations o
+        JOIN organization_members m ON m.organization_id=o.id
+        WHERE o.public_id=:id AND o.status='APPROVED' AND m.user_id=:user AND m.role='OWNER' FOR SHARE'''),
+        {'id': public_id, 'user': user_id})).mappings().first()
+    if not organization:
+        raise HTTPException(422, 'Choose an approved organization that you manage')
+    return organization
+
+
+@app.get('/api/v1/admin/events')
+async def admin_events(status_value: str | None = None, user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    status_value = (status_value or 'PUBLISHED').upper()
+    if status_value not in {'PUBLISHED', 'UNPUBLISHED'}:
+        raise HTTPException(422, 'Expected PUBLISHED or UNPUBLISHED status')
+    items = await rows(session, '''SELECT e.public_id AS id,e.title,e.city,e.start_at AS "startsAt",e.status,
+        u.public_id AS "organizerId",u.name AS "organizerName",o.public_id AS "organizationId",o.name AS "organizationName"
+        FROM events e JOIN users u ON u.id=e.organizer_id LEFT JOIN organizations o ON o.id=e.organization_id
+        WHERE e.status=:status ORDER BY e.start_at DESC,e.id DESC''', {'status': status_value})
+    for item in items:
+        item['startsAt'] = timestamp(item['startsAt'])
+        item['status'] = item['status'].lower()
+    return items
+
+
+@app.patch('/api/v1/admin/events/{event_id}/moderation')
+async def moderate_event(event_id: str, payload: EventModerationInput, user=Depends(require_admin), session: AsyncSession = Depends(db_session)):
+    await session.commit()
+    async with session.begin():
+        event = (await session.execute(text('''SELECT id,public_id,title,organizer_id,status FROM events
+            WHERE public_id=:id FOR UPDATE'''), {'id': event_id})).mappings().first()
+        if not event:
+            raise HTTPException(404, 'Event not found')
+        if event['status'] != 'PUBLISHED':
+            raise HTTPException(409, 'Only published events can be removed from the catalog')
+        await session.execute(text("UPDATE events SET status='UNPUBLISHED',updated_at=now() WHERE id=:id"), {'id': event['id']})
+        await session.execute(text('''INSERT INTO event_moderations(event_id,admin_id,action,reason)
+            VALUES (:event,:admin,:action,:reason)'''), {
+                'event': event['id'], 'admin': user['db_id'], 'action': payload.action, 'reason': payload.reason or None,
+            })
+        await session.execute(text('''INSERT INTO notifications(user_id,event_id,type,title,message)
+            VALUES (:user,:event,'event_moderation','Событие снято с публикации',:message)'''), {
+                'user': event['organizer_id'], 'event': event['id'],
+                'message': payload.reason or f'Событие «{event["title"]}» больше не отображается в каталоге.',
+            })
+    await restart_redis_cache()
+    await broadcast_chat_message(event_id, {'type': 'event_unpublished', 'detail': 'Событие снято с публикации администратором.'})
+    return {'id': event_id, 'status': 'unpublished'}
+
+
 @app.post('/api/v1/events', status_code=status.HTTP_201_CREATED)
 async def create_event(payload: EventInput, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     if payload.startsAt.tzinfo is None:
@@ -684,16 +1058,16 @@ async def create_event(payload: EventInput, user=Depends(require_user), session:
         raise HTTPException(422, 'city is required')
     await session.commit()
     async with session.begin():
-        sport = await session.scalar(text('SELECT id FROM sports WHERE lower(name)=lower(:name)'), {'name': payload.sportName})
+        sport = await session.scalar(text("SELECT id FROM sports WHERE lower(name)=lower(:name) AND status='APPROVED'"), {'name': payload.sportName})
         if sport is None:
-            sport = await session.scalar(text('INSERT INTO sports(public_id,name,slug) VALUES (:id,:name,:slug) RETURNING id'),
-                {'id': 'sp-' + uuid4().hex[:12], 'name': payload.sportName, 'slug': 'sport-' + uuid4().hex[:12]})
+            raise HTTPException(422, 'Choose an approved sport or submit a sport request for moderation')
+        organization = await approved_owned_organization(session, payload.organizationId, user['db_id']) if payload.organizationId else None
         event_id = 'ev-' + uuid4().hex[:12]
-        event_db_id = await session.scalar(text('''INSERT INTO events(public_id,organizer_id,sport_id,title,description,event_type,location,district,city,start_at,
+        event_db_id = await session.scalar(text('''INSERT INTO events(public_id,organization_id,organizer_id,sport_id,title,description,event_type,location,district,city,start_at,
              capacity,join_mode,level,min_age,latitude,longitude,image_url,status,published_at) VALUES
-             (:id,:user,:sport,:title,:description,:type,:address,:district,:city,:starts,:capacity,:mode,:level,:age,:latitude,:longitude,NULL,'PUBLISHED',now())
+             (:id,:organization,:user,:sport,:title,:description,:type,:address,:district,:city,:starts,:capacity,:mode,:level,:age,:latitude,:longitude,NULL,'PUBLISHED',now())
              RETURNING id'''),
-             {'id': event_id, 'user': user['db_id'], 'sport': sport, 'title': payload.title, 'description': payload.description.strip(),
+             {'id': event_id, 'organization': organization['id'] if organization else None, 'user': user['db_id'], 'sport': sport, 'title': payload.title, 'description': payload.description.strip(),
               'type': payload.eventType, 'address': payload.address, 'district': payload.district, 'city': city, 'starts': payload.startsAt,
               'capacity': payload.capacity, 'mode': payload.joinMode, 'level': payload.level, 'age': payload.minAge,
               'latitude': payload.latitude, 'longitude': payload.longitude})
@@ -725,7 +1099,7 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
         raise HTTPException(422, 'city is required')
     await session.commit()
     async with session.begin():
-        event = (await session.execute(text('SELECT id,organizer_id,event_type FROM events WHERE public_id=:id FOR UPDATE'),
+        event = (await session.execute(text('SELECT id,organizer_id,event_type,organization_id FROM events WHERE public_id=:id FOR UPDATE'),
                                        {'id': event_id})).mappings().first()
         if not event:
             raise HTTPException(404, 'Event not found')
@@ -735,15 +1109,15 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
                                          {'id': event['id']})
         if confirmed > payload.capacity:
             raise HTTPException(409, 'Capacity cannot be below confirmed registrations')
-        sport = await session.scalar(text('SELECT id FROM sports WHERE lower(name)=lower(:name)'),
+        sport = await session.scalar(text("SELECT id FROM sports WHERE lower(name)=lower(:name) AND status='APPROVED'"),
                                      {'name': payload.sportName})
         if sport is None:
-            sport = await session.scalar(text('INSERT INTO sports(public_id,name,slug) VALUES (:id,:name,:slug) RETURNING id'),
-                {'id': 'sp-' + uuid4().hex[:12], 'name': payload.sportName, 'slug': 'sport-' + uuid4().hex[:12]})
-        await session.execute(text('''UPDATE events SET sport_id=:sport,title=:title,description=:description,event_type=:type,
+            raise HTTPException(422, 'Choose an approved sport or submit a sport request for moderation')
+        organization = await approved_owned_organization(session, payload.organizationId, user['db_id']) if payload.organizationId else None
+        await session.execute(text('''UPDATE events SET organization_id=:organization,sport_id=:sport,title=:title,description=:description,event_type=:type,
            location=:address,district=:district,city=:city,latitude=:latitude,longitude=:longitude,start_at=:starts,capacity=:capacity,
            join_mode=:mode,level=:level,min_age=:age,updated_at=now() WHERE id=:id'''), {
-            'id': event['id'], 'sport': sport, 'title': payload.title, 'description': payload.description.strip(),
+            'id': event['id'], 'organization': organization['id'] if organization else None, 'sport': sport, 'title': payload.title, 'description': payload.description.strip(),
             'type': payload.eventType, 'address': payload.address, 'district': payload.district, 'city': city,
             'latitude': payload.latitude, 'longitude': payload.longitude, 'starts': payload.startsAt,
             'capacity': payload.capacity, 'mode': payload.joinMode,
@@ -766,8 +1140,21 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
     await restart_redis_cache()
     return {'id': event_id}
 
+
+async def create_event_chat_activity(session: AsyncSession, event_db_id: int, event_id: str, user: dict, kind: str):
+    """Persist a join/leave line in the same ordered history as chat messages."""
+    verb = 'присоединился(-ась) к мероприятию' if kind == 'PARTICIPANT_JOINED' else 'покинул(-а) мероприятие'
+    created = (await session.execute(text('''INSERT INTO event_comments(event_id,user_id,text,kind)
+        VALUES (:event,:user,:text,:kind) RETURNING id,created_at'''), {
+            'event': event_db_id, 'user': user['db_id'], 'text': f"{user['name']} {verb}", 'kind': kind,
+        })).mappings().one()
+    return {'id': f"c-{created['id']}", 'eventId': event_id, 'authorId': user['id'],
+            'text': f"{user['name']} {verb}", 'kind': kind, 'createdAt': timestamp(created['created_at'])}
+
+
 @app.post('/api/v1/events/{event_id}/join', status_code=status.HTTP_201_CREATED)
 async def join(event_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    activity = None
     await session.commit()
     async with session.begin():
         event = (await session.execute(text("SELECT id,organizer_id,capacity,join_mode,status FROM events WHERE public_id=:id FOR UPDATE"), {'id': event_id})).mappings().first()
@@ -784,8 +1171,29 @@ async def join(event_id: str, user=Depends(require_user), session: AsyncSession 
         else:
             await session.execute(text('INSERT INTO event_registrations(event_id,user_id,status) VALUES (:event,:user,:status)'),
                                   {'event': event['id'], 'user': user['db_id'], 'status': result})
+        if result == 'REGISTERED':
+            activity = await create_event_chat_activity(session, event['id'], event_id, user, 'PARTICIPANT_JOINED')
     await restart_redis_cache()
+    if activity:
+        await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})
     return {'status': 'confirmed' if result == 'REGISTERED' else 'pending'}
+
+
+@app.delete('/api/v1/events/{event_id}/join', status_code=status.HTTP_204_NO_CONTENT)
+async def leave_event(event_id: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
+    activity = None
+    await session.commit()
+    async with session.begin():
+        registration = (await session.execute(text('''SELECT r.id,e.id AS event_db_id,e.public_id AS event_id
+            FROM event_registrations r JOIN events e ON e.id=r.event_id
+            WHERE e.public_id=:event AND r.user_id=:user AND e.status='PUBLISHED' AND r.status='REGISTERED'
+            FOR UPDATE OF r,e'''), {'event': event_id, 'user': user['db_id']})).mappings().first()
+        if not registration:
+            raise HTTPException(404, 'Confirmed participation not found')
+        await session.execute(text("UPDATE event_registrations SET status='CANCELLED' WHERE id=:id"), {'id': registration['id']})
+        activity = await create_event_chat_activity(session, registration['event_db_id'], event_id, user, 'PARTICIPANT_LEFT')
+    await restart_redis_cache()
+    await broadcast_chat_message(event_id, {'type': 'comment', 'comment': activity})
 
 
 class CommentInput(BaseModel):
@@ -798,9 +1206,126 @@ class CommentInput(BaseModel):
         return value.strip()
 
 
+async def broadcast_chat_message(event_id: str, message: dict):
+    async with _chat_connections_lock:
+        connections = list(_chat_connections.get(event_id, set()))
+    disconnected = []
+    for connection in connections:
+        try:
+            await connection.send_json(message)
+        except (RuntimeError, WebSocketDisconnect):
+            disconnected.append(connection)
+    if disconnected:
+        async with _chat_connections_lock:
+            current = _chat_connections.get(event_id)
+            if current:
+                current.difference_update(disconnected)
+                if not current:
+                    _chat_connections.pop(event_id, None)
+
+
+async def websocket_chat_user(websocket: WebSocket, session: AsyncSession):
+    token = websocket.cookies.get(settings.session_cookie_name)
+    if not token:
+        return None
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    user = (await session.execute(text('''SELECT u.id AS db_id,u.public_id AS id FROM auth_sessions s
+        JOIN users u ON u.id=s.user_id WHERE s.token_hash=:hash AND s.revoked_at IS NULL
+        AND s.expires_at > now() AND u.status='ACTIVE' '''), {'hash': digest})).mappings().first()
+    return dict(user) if user else None
+
+
+def websocket_origin_trusted(websocket: WebSocket):
+    origin = websocket.headers.get('origin')
+    if not origin:
+        return False
+    clean_origin = origin.rstrip('/')
+    if clean_origin in settings.allowed_origins:
+        return True
+    parsed = urlsplit(clean_origin)
+    return parsed.scheme in {'http', 'https'} and parsed.netloc == websocket.headers.get('host', '')
+
+
+@app.websocket('/api/v1/events/{event_id}/ws')
+async def event_chat_socket(websocket: WebSocket, event_id: str):
+    if not websocket_origin_trusted(websocket):
+        await websocket.close(code=4403)
+        return
+    async with sessions() as session:
+        event = (await session.execute(text('''SELECT id,organizer_id FROM events
+            WHERE public_id=:id AND status='PUBLISHED' '''), {'id': event_id})).mappings().first()
+        if not event:
+            await websocket.close(code=4404)
+            return
+        user = await websocket_chat_user(websocket, session)
+        can_write = False
+        if user:
+            participant = await session.scalar(text('''SELECT 1 FROM event_registrations
+                WHERE event_id=:event AND user_id=:user AND status='REGISTERED' '''),
+                {'event': event['id'], 'user': user['db_id']})
+            can_write = event['organizer_id'] == user['db_id'] or bool(participant)
+        await websocket.accept()
+        async with _chat_connections_lock:
+            _chat_connections.setdefault(event_id, set()).add(websocket)
+        await websocket.send_json({'type': 'ready', 'canWrite': can_write})
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                if not isinstance(payload, dict) or payload.get('type') != 'message':
+                    await websocket.send_json({'type': 'error', 'detail': 'Unknown chat message'})
+                    continue
+                client_message_id = str(payload.get('clientMessageId') or '')
+                if not client_message_id or len(client_message_id) > 100:
+                    await websocket.send_json({'type': 'error', 'detail': 'Message identifier is required'})
+                    continue
+                if not user or not can_write:
+                    await websocket.send_json({'type': 'error', 'clientMessageId': client_message_id,
+                                               'detail': 'Only confirmed participants can write in this chat'})
+                    continue
+                current_access = (await session.execute(text('''SELECT e.status,e.organizer_id,
+                    EXISTS(SELECT 1 FROM event_registrations r WHERE r.event_id=e.id AND r.user_id=:user
+                        AND r.status='REGISTERED') AS is_participant
+                    FROM events e WHERE e.id=:event'''),
+                    {'event': event['id'], 'user': user['db_id']})).mappings().first()
+                if not current_access or current_access['status'] != 'PUBLISHED':
+                    await websocket.send_json({'type': 'event_unpublished',
+                                               'detail': 'Событие больше недоступно для обсуждения.'})
+                    await websocket.close(code=4404)
+                    return
+                if current_access['organizer_id'] != user['db_id'] and not current_access['is_participant']:
+                    await websocket.send_json({'type': 'error', 'clientMessageId': client_message_id,
+                                               'detail': 'Только подтверждённые участники могут писать в чате'})
+                    continue
+                try:
+                    comment_input = CommentInput(text=str(payload.get('text') or ''))
+                except ValidationError:
+                    await websocket.send_json({'type': 'error', 'clientMessageId': client_message_id,
+                                               'detail': 'Message must contain text up to 5000 characters'})
+                    continue
+                await session.commit()
+                async with session.begin():
+                    created = (await session.execute(text('''INSERT INTO event_comments(event_id,user_id,text)
+                        VALUES (:event,:user,:text) RETURNING id,created_at'''),
+                        {'event': event['id'], 'user': user['db_id'], 'text': comment_input.text})).mappings().one()
+                comment = {'id': f"c-{created['id']}", 'eventId': event_id, 'authorId': user['id'],
+                           'text': comment_input.text, 'kind': 'MESSAGE', 'createdAt': timestamp(created['created_at'])}
+                await restart_redis_cache()
+                await broadcast_chat_message(event_id, {'type': 'comment', 'comment': comment})
+                await websocket.send_json({'type': 'ack', 'clientMessageId': client_message_id})
+        except WebSocketDisconnect:
+            pass
+        finally:
+            async with _chat_connections_lock:
+                current = _chat_connections.get(event_id)
+                if current:
+                    current.discard(websocket)
+                    if not current:
+                        _chat_connections.pop(event_id, None)
+
+
 @app.get('/api/v1/events/{event_id}/comments')
 async def get_comments(event_id: str, session: AsyncSession = Depends(db_session)):
-    result = await rows(session, '''SELECT 'c-' || c.id AS id,e.public_id AS "eventId",u.public_id AS "authorId",c.text,c.created_at AS "createdAt"
+    result = await rows(session, '''SELECT 'c-' || c.id AS id,e.public_id AS "eventId",u.public_id AS "authorId",c.text,c.kind,c.created_at AS "createdAt"
       FROM event_comments c JOIN events e ON e.id=c.event_id JOIN users u ON u.id=c.user_id
       WHERE e.public_id=:event AND e.status='PUBLISHED' AND c.status='VISIBLE' ORDER BY c.id''', {'event': event_id})
     for item in result: item['createdAt'] = timestamp(item['createdAt'])
@@ -820,19 +1345,26 @@ async def add_comment(event_id: str, payload: CommentInput, user=Depends(require
             {'event': event['id'], 'user': user['db_id']})
         if event['organizer_id'] != user['db_id'] and not is_participant:
             raise HTTPException(403, 'Only the organizer and confirmed participants can write in this event chat')
-        comment_id = await session.scalar(text('INSERT INTO event_comments(event_id,user_id,text) VALUES (:event,:user,:text) RETURNING id'),
-                                                {'event': event['id'], 'user': user['db_id'], 'text': payload.text})
+        created = (await session.execute(text('''INSERT INTO event_comments(event_id,user_id,text)
+            VALUES (:event,:user,:text) RETURNING id,created_at'''),
+            {'event': event['id'], 'user': user['db_id'], 'text': payload.text})).mappings().one()
+    comment = {'id': f"c-{created['id']}", 'eventId': event_id, 'authorId': user['id'],
+               'text': payload.text, 'kind': 'MESSAGE', 'createdAt': timestamp(created['created_at'])}
     await restart_redis_cache()
-    return {'id': f'c-{comment_id}', 'created': True}
+    await broadcast_chat_message(event_id, {'type': 'comment', 'comment': comment})
+    return {'id': comment['id'], 'created': True}
 
 
 @app.post('/api/v1/participations/{participation_id}/review')
 async def review(participation_id: int, decision: str, user=Depends(require_user), session: AsyncSession = Depends(db_session)):
     if decision not in ('confirmed', 'rejected'): raise HTTPException(422, 'Expected confirmed or rejected')
+    activity = None
     await session.commit()
     async with session.begin():
-        registration = (await session.execute(text('''SELECT r.id,e.id AS event_id,e.capacity,e.organizer_id FROM event_registrations r
-          JOIN events e ON e.id=r.event_id WHERE r.id=:id AND r.status='PENDING' FOR UPDATE OF r,e'''), {'id': participation_id})).mappings().first()
+        registration = (await session.execute(text('''SELECT r.id,r.user_id,e.id AS event_id,e.public_id AS event_public_id,e.title,
+            e.capacity,e.organizer_id,participant.public_id AS participant_public_id,participant.name AS participant_name
+            FROM event_registrations r JOIN events e ON e.id=r.event_id JOIN users participant ON participant.id=r.user_id
+            WHERE r.id=:id AND r.status='PENDING' AND e.status='PUBLISHED' FOR UPDATE OF r,e'''), {'id': participation_id})).mappings().first()
         if not registration: raise HTTPException(404, 'Pending registration not found')
         if registration['organizer_id'] != user['db_id']: raise HTTPException(403, 'Only the event organizer may review participation')
         if decision == 'confirmed':
@@ -840,7 +1372,18 @@ async def review(participation_id: int, decision: str, user=Depends(require_user
             if count >= registration['capacity']: raise HTTPException(409, 'Event is full')
         await session.execute(text('UPDATE event_registrations SET status=:status WHERE id=:id'),
                               {'id': participation_id, 'status': 'REGISTERED' if decision == 'confirmed' else 'CANCELLED'})
+        await session.execute(text('''INSERT INTO notifications(user_id,event_id,type,title,message)
+            VALUES (:user,:event,'participation_review',:title,:message)'''), {
+                'user': registration['user_id'], 'event': registration['event_id'],
+                'title': 'Участие подтверждено' if decision == 'confirmed' else 'Заявка отклонена',
+                'message': f'Организатор {"подтвердил ваше участие в событии" if decision == "confirmed" else "отклонил заявку на событие"} «{registration["title"]}».',
+            })
+        if decision == 'confirmed':
+            participant = {'db_id': registration['user_id'], 'id': registration['participant_public_id'], 'name': registration['participant_name']}
+            activity = await create_event_chat_activity(session, registration['event_id'], registration['event_public_id'], participant, 'PARTICIPANT_JOINED')
     await restart_redis_cache()
+    if activity:
+        await broadcast_chat_message(activity['eventId'], {'type': 'comment', 'comment': activity})
     return {'status': decision}
 
 
@@ -921,8 +1464,11 @@ async def suggest_addresses(query: str, city: str | None = None):
         selected_city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality') or city
         district = address.get('city_district') or address.get('district') or address.get('borough') or address.get('suburb') or ''
         label = str(item.get('display_name') or '').strip()
-        if label:
-            suggestions.append({'label': label, 'address': label[:255], 'city': str(selected_city or '')[:150],
+        road = str(address.get('road') or address.get('pedestrian') or address.get('footway') or address.get('amenity') or address.get('building') or '').strip()
+        house_number = str(address.get('house_number') or '').strip()
+        short_address = ', '.join(part for part in (road, house_number) if part) or label
+        if label and short_address:
+            suggestions.append({'label': label, 'address': short_address[:255], 'city': str(selected_city or '')[:150],
                                 'district': str(district or '')[:100], 'latitude': latitude, 'longitude': longitude})
     try:
         await redis.set(cache_key, json.dumps(suggestions, ensure_ascii=False), ex=600)

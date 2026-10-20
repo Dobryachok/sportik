@@ -16,9 +16,12 @@ class Settings(BaseSettings):
     geo_url: str = 'https://nominatim.openstreetmap.org/reverse'
     geo_search_url: str = 'https://nominatim.openstreetmap.org/search'
     geo_contact_email: str = ''
-    geo_user_agent: str = 'SportVmeste/1.0'
+    geo_user_agent: str = 'Sportik/1.0'
     geo_timeout_seconds: float = 5
     default_city: str = ''
+    # Optional bootstrap identity. The matching account still authenticates normally;
+    # this setting only grants the ADMIN application role after a successful login.
+    admin_email: str = ''
 
     @property
     def allowed_origins(self) -> list[str]:

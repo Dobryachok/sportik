@@ -1,8 +1,9 @@
-import { ArrowLeft, Camera, Link2, LogOut, MapPin, Pencil, Plus, X } from 'lucide-react'
+import { ArrowLeft, Camera, Link2, LogOut, MapPin, Pencil, Plus, ShieldCheck, X } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { PrimaryButton } from '../components/PrimaryButton'
+import { ThemeToggle } from '../components/ThemeToggle'
 import type { SocialLink } from '../data/types'
 
 const maritalOptions = [
@@ -95,24 +96,25 @@ export function ProfilePage() {
   ]
 
   return (
-    <div className="mx-auto min-w-0 max-w-full pb-5 md:max-w-xl">
-      <header className="mb-4 flex h-10 items-center">
+    <div className="page-frame pb-5">
+      <header className="mb-4 flex h-10 items-center justify-between">
         <button
           type="button"
           onClick={() => navigate(-1)}
           aria-label="Назад"
           className="flex h-10 w-10 items-center justify-center rounded-xl text-white transition-colors hover:bg-white/[0.07]"
         >
-          <ArrowLeft size={25} />
+          <ArrowLeft size={23} />
         </button>
+        <div className="flex items-center gap-2"><span className="text-sm font-bold text-muted">Профиль</span><ThemeToggle compact /></div>
       </header>
 
-      <section className="px-1 pb-7 text-center">
-        <div className="relative mx-auto h-36 w-36">
+      <section className="rounded-[1.7rem] border border-white/[0.08] bg-card px-4 pb-5 pt-6 text-center shadow-[0_12px_32px_rgba(10,64,96,0.08)] sm:px-7">
+        <div className="relative mx-auto h-28 w-28">
           <img
             src={currentUser.avatarUrl || '/images/hero.png'}
             alt={`Аватар ${currentUser.name}`}
-            className="h-36 w-36 rounded-full border-[3px] border-white/70 object-cover shadow-[0_14px_28px_rgba(0,0,0,0.35)]"
+            className="h-28 w-28 rounded-full border-[3px] border-white/70 object-cover shadow-[0_10px_24px_rgba(10,47,67,0.22)]"
           />
           <button
             type="button"
@@ -130,16 +132,16 @@ export function ProfilePage() {
             type="file"
           />
         </div>
-        <h1 className="mt-5 text-[1.7rem] font-bold leading-none tracking-[-0.04em] text-white">
+        <h1 className="mt-4 text-[1.7rem] font-bold leading-none tracking-[-0.04em] text-white">
           {currentUser.name}{currentUser.age ? `, ${currentUser.age}` : ''}
         </h1>
-        <p className="mt-3 flex items-center justify-center gap-2 text-lg text-muted">
+        <p className="mt-2 flex items-center justify-center gap-2 text-base text-muted">
           <MapPin size={20} className="text-white/75" />
           {currentUser.city || city || 'Город не выбран'}
         </p>
 
         {!editing && (
-          <div className="mt-8 grid gap-3">
+          <div className="mt-6 grid gap-3 sm:grid-cols-2">
             <button
               type="button"
               onClick={openEditing}
@@ -157,7 +159,7 @@ export function ProfilePage() {
         )}
 
         {!editing && (
-          <div className="mt-9 grid grid-cols-3 divide-x divide-white/10">
+          <div className="mt-6 grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 pt-5">
             <div>
               <p className="text-2xl font-bold text-accent">{stats.events}</p>
               <p className="mt-1 text-sm text-muted">событий</p>
@@ -175,7 +177,7 @@ export function ProfilePage() {
       </section>
 
       {editing ? (
-        <form onSubmit={save} className="border-t-8 border-black/30 px-1 pt-7">
+        <form onSubmit={save} className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
           <div className="mb-5 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-bold">Информация о себе</h2>
@@ -189,7 +191,7 @@ export function ProfilePage() {
               Отмена
             </button>
           </div>
-          <div className="space-y-4 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
+          <div className="space-y-4">
             <label className="block text-sm font-medium text-white/85">
               Имя
               <input required value={name} onChange={(event) => setName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-bg px-3.5 py-3 text-white outline-none transition-colors focus:border-accent" />
@@ -247,9 +249,9 @@ export function ProfilePage() {
         </form>
       ) : (
         <>
-          <section className="border-t-8 border-black/30 px-1 py-7">
-            <h2 className="text-xl font-bold">Дополнительная информация</h2>
-            <div className="mt-5 divide-y divide-white/[0.12] border-y border-white/[0.12]">
+          <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
+            <h2 className="text-lg font-bold">Дополнительная информация</h2>
+            <div className="mt-4 divide-y divide-white/[0.12] border-y border-white/[0.12]">
               {infoRows.map((row) => (
                 <div key={row.label} className="flex min-h-16 items-center justify-between gap-5 py-4 text-base">
                   <span className="font-semibold text-white">{row.label}</span>
@@ -258,15 +260,15 @@ export function ProfilePage() {
               ))}
             </div>
           </section>
-          <section className="px-1 pb-2">
+          <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
             <div className="flex items-center justify-between gap-4">
-              <h2 className="text-xl font-bold">О себе</h2>
+              <h2 className="text-lg font-bold">О себе</h2>
               <button type="button" onClick={openEditing} className="text-sm font-semibold text-accent">Изменить</button>
             </div>
             <p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted">{currentUser.bio || 'Добавьте немного информации о себе.'}</p>
           </section>
-          <section className="px-1 py-5">
-            <div className="flex items-center justify-between gap-4"><h2 className="text-xl font-bold">Социальные сети</h2><button type="button" onClick={openEditing} className="inline-flex items-center gap-1 text-sm font-semibold text-accent"><Plus size={16} /> Добавить соцсеть</button></div>
+          <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
+            <div className="flex items-center justify-between gap-4"><h2 className="text-lg font-bold">Социальные сети</h2><button type="button" onClick={openEditing} className="inline-flex items-center gap-1 text-sm font-semibold text-accent"><Plus size={16} /> Добавить соцсеть</button></div>
             {currentUser.socialLinks?.length ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 {currentUser.socialLinks.map((item) => <a key={`${item.platform}:${item.url}`} href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-card px-3 py-2 text-sm font-semibold text-white transition-colors hover:border-accent"><Link2 size={15} className="text-accent" />{item.label || item.platform}</a>)}
@@ -276,6 +278,7 @@ export function ProfilePage() {
         </>
       )}
 
+      {currentUser?.role === 'admin' && <Link to="/admin" className="mt-6 inline-flex min-h-11 items-center gap-2 rounded-xl border border-accent/50 px-4 text-sm font-semibold text-accent hover:bg-accent/10"><ShieldCheck size={17} />Администрирование</Link>}
       <button
         type="button"
         onClick={async () => {

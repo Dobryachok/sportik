@@ -1,15 +1,16 @@
 import { Link, useLocation } from 'react-router-dom'
+import { isNavActive, navItems, visibleNavItems } from '../app/navigation'
 import { useAppData } from '../app/AppDataContext'
-import { isNavActive, visibleNavItems } from '../app/navigation'
 
 export function BottomNav() {
   const { pathname } = useLocation()
-  const { currentUser } = useAppData()
+  const { currentUser, state } = useAppData()
   const items = visibleNavItems(Boolean(currentUser))
+  const hasUnreadNotifications = state.notifications.some((item) => !item.isRead)
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/[0.09] bg-[#15191d]/95 shadow-[0_-10px_26px_rgba(0,0,0,0.22)] backdrop-blur-xl md:hidden"
+      className="fixed bottom-0 left-0 right-0 z-50 border-t border-white/[0.09] bg-card/95 shadow-[0_-10px_26px_rgba(16,47,67,0.12)] backdrop-blur-xl md:hidden"
       style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       aria-label="Основная навигация"
     >
@@ -29,9 +30,9 @@ export function BottomNav() {
               >
                 <span className="relative">
                   <Icon size={20} strokeWidth={active ? 2.25 : 1.8} />
-                  {item.showBadge && (
+                  {item.showBadge && hasUnreadNotifications && (
                     <span
-                      className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-warning ring-2 ring-[#15191d]"
+                      className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-warning ring-2 ring-card"
                       aria-hidden
                     />
                   )}

@@ -1,32 +1,42 @@
-import { ArrowUpRight, Plus } from 'lucide-react'
+import { ArrowUpRight, Plus, Sparkles } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { CityChooser } from '../components/CityChooser'
+import { ThemeToggle } from '../components/ThemeToggle'
 
 const sportTones = [
-  'from-[#164152] to-[#1c2930]',
-  'from-[#3a2e19] to-[#25231e]',
-  'from-[#202f48] to-[#21252b]',
-  'from-[#423228] to-[#27272a]',
+  'from-[#d8f3ff] to-[#f7fcff]',
+  'from-[#e8f7d9] to-[#fbfff7]',
+  'from-[#fff0cf] to-[#fffcf5]',
+  'from-[#eee6ff] to-[#fcfaff]',
 ]
 
 export function EventsFeedPage() {
-  const { state, city } = useAppData()
+  const { state, city, currentUser } = useAppData()
+  const hasFirstEvent = Boolean(currentUser && state.participations.some((item) => item.userId === currentUser.id && (item.status === 'confirmed' || item.status === 'pending')))
 
   return (
-    <div className="mx-auto min-w-0 max-w-full pb-3 md:max-w-5xl">
+    <div className="page-frame pb-3">
       <header className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <p className="mb-1 text-sm font-medium text-muted">Найдите свою игру</p>
+          <p className="mb-1 text-sm font-medium text-muted">Спортик помогает встретиться вживую</p>
           <h1 className="text-[2rem] font-bold leading-none tracking-[-0.045em] text-white sm:text-4xl">События</h1>
         </div>
-        <CityChooser />
+        <div className="flex items-center gap-2"><CityChooser /><span className="md:hidden"><ThemeToggle compact /></span></div>
       </header>
 
       {!city && (
         <div className="rounded-2xl border border-accent/30 bg-accent/10 px-4 py-3.5 text-sm leading-relaxed text-white">
           Выберите город — покажем доступные виды спорта и мероприятия.
         </div>
+      )}
+
+      {currentUser && !hasFirstEvent && (
+        <Link to="/tamagotchi" className="mt-5 flex items-center gap-3 rounded-2xl border border-accent/20 bg-card p-4 shadow-[0_8px_24px_rgba(9,104,157,0.08)] transition-colors hover:border-accent/45">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-accent/10 text-accent"><Sparkles size={21} /></span>
+          <span className="min-w-0 flex-1"><span className="block font-bold text-white">Ваш первый выход на площадку</span><span className="mt-0.5 block text-sm text-muted">Три шага до первой встречи</span></span>
+          <ArrowUpRight size={19} className="shrink-0 text-accent" />
+        </Link>
       )}
 
       <section className="mt-7">

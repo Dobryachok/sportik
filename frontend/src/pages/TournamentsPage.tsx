@@ -13,7 +13,7 @@ export function TournamentsPage() {
     .sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime())
 
   return (
-    <div className="mx-auto min-w-0 max-w-full md:max-w-5xl">
+    <div className="page-frame">
       <PageHeader title="Турниры" back right={<CityChooser />} />
       <section className="mb-7 rounded-[1.35rem] border border-warning/25 bg-gradient-to-br from-warning/15 to-transparent px-5 py-5">
         <div className="flex items-start gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-warning text-bg"><Trophy size={22} /></div><div><h1 className="text-xl font-bold text-white">Соревнуйтесь в своём виде спорта</h1><p className="mt-1 text-sm leading-5 text-muted">При публикации турнира спортсмены с опытом в этой специализации получают приглашение.</p></div></div>
