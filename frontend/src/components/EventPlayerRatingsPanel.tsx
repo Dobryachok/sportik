@@ -7,7 +7,16 @@ import {
 } from '../data/api'
 import { attendanceWindowOpen } from '../lib/attendance'
 import { formatEventDate } from '../lib/format'
-import { StarRating } from './StarRating'
+import { StarPicker, StarRating } from './StarRating'
+
+function skillScoreFromStars(stars: number) {
+  return Math.max(1, Math.min(100, Math.round(stars * 20)))
+}
+
+function starsFromSkillScore(score: number | null | undefined) {
+  if (score == null) return 0
+  return Math.max(0, Math.min(5, score / 20))
+}
 
 type Props = {
   eventId: string
@@ -99,6 +108,13 @@ export function EventPlayerRatingsPanel({ eventId, startsAt, joinMode }: Props) 
         score,
       })
       setData(updated)
+      setDraftFriendliness((prev) => {
+        const next = { ...prev }
+        for (const row of updated.rows) {
+          if (row.myFriendliness != null) next[row.userId] = row.myFriendliness
+        }
+        return next
+      })
     })
   }
 
@@ -111,6 +127,13 @@ export function EventPlayerRatingsPanel({ eventId, startsAt, joinMode }: Props) 
         score,
       })
       setData(updated)
+      setDraftSkill((prev) => {
+        const next = { ...prev }
+        for (const row of updated.rows) {
+          if (row.skillScore != null) next[row.userId] = row.skillScore
+        }
+        return next
+      })
     })
   }
 
@@ -126,7 +149,7 @@ export function EventPlayerRatingsPanel({ eventId, startsAt, joinMode }: Props) 
     <section className="mt-6 rounded-[1.35rem] border border-white/[0.08] bg-card p-4">
       <h2 className="text-xl font-bold tracking-[-0.025em]">Оценки участников</h2>
       <p className="mt-1 text-xs leading-5 text-muted">
-        Дружелюбие ставят другие игроки ползунком. Скилл — только организатор на открытых событиях (звёзды по шкале 1–5).
+        Дружелюбие — ползунок (оценивают участники). Скилл — только звёзды 1–5 (выставляет организатор на открытых событиях).
       </p>
       {!windowOpen && (
         <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-muted">
@@ -142,8 +165,8 @@ export function EventPlayerRatingsPanel({ eventId, startsAt, joinMode }: Props) 
         <ul className="mt-4 space-y-3">
           {data.rows.map((row) => {
             const friendlinessValue = draftFriendliness[row.userId] ?? row.myFriendliness ?? 70
-            const skillValue = draftSkill[row.userId] ?? row.skillScore ?? 60
-            const stars = row.skillStars ?? skillValue / 20
+            const skillScore = draftSkill[row.userId] ?? row.skillScore ?? null
+            const skillStars = starsFromSkillScore(skillScore)
             return (
               <li
                 key={row.userId}
@@ -162,43 +185,45 @@ export function EventPlayerRatingsPanel({ eventId, startsAt, joinMode }: Props) 
                     <p className="truncate text-xs text-muted">{row.city || 'Город не указан'}</p>
                   </div>
                 </div>
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+                <div className="mt-3 space-y-3">
                   {showSkillColumn && (
-                    <div className="min-w-0 sm:w-[42%]">
-                      <p className="text-[11px] font-medium text-muted">Скилл</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-2">
-                        <StarRating value={stars} size={18} />
+                    <div className="rounded-lg border border-white/[0.06] bg-card/40 px-3 py-2.5">
+                      <p className="text-[11px] font-medium text-muted">Скилл (организатор)</p>
+                      <div className="mt-2">
                         {row.canRateSkill && windowOpen ? (
-                          <RatingSlider
-                            label="Организатор"
-                            value={skillValue}
-                            onChange={(score) => saveSkill(row.userId, score)}
+                          <StarPicker
+                            value={skillStars || 0}
+                            size={26}
+                            onChange={(stars) => saveSkill(row.userId, skillScoreFromStars(stars))}
                           />
-                        ) : row.skillScore != null ? (
-                          <span className="text-xs tabular-nums text-muted">{row.skillScore}%</span>
+                        ) : skillScore != null ? (
+                          <StarRating value={skillStars} size={18} />
                         ) : (
-                          <span className="text-xs text-muted">—</span>
+                          <p className="text-xs text-muted">Организатор ещё не выставил скилл</p>
                         )}
                       </div>
                     </div>
                   )}
-                  <div className="min-w-0 flex-1">
+                  <div className="rounded-lg border border-white/[0.06] bg-card/40 px-3 py-2.5">
+                    <p className="text-[11px] font-medium text-muted">Дружелюбие</p>
                     {row.canRateFriendliness && windowOpen ? (
-                      <RatingSlider
-                        label="Ваше дружелюбие"
-                        value={friendlinessValue}
-                        onChange={(score) => saveFriendliness(row.userId, score)}
-                      />
+                      <>
+                        <RatingSlider
+                          label="Ваша оценка"
+                          value={friendlinessValue}
+                          onChange={(score) => saveFriendliness(row.userId, score)}
+                        />
+                        {row.avgFriendliness != null && (
+                          <p className="mt-1 text-[10px] text-muted">
+                            Среднее по событию: {row.avgFriendliness}%
+                          </p>
+                        )}
+                      </>
                     ) : (
-                      <p className="text-[11px] text-muted">
-                        Дружелюбие (среднее):{' '}
-                        <span className="font-semibold text-white">
-                          {row.avgFriendliness != null ? `${row.avgFriendliness}%` : '—'}
-                        </span>
+                      <p className="mt-2 text-sm text-white">
+                        {row.avgFriendliness != null ? `${row.avgFriendliness}%` : '—'}
+                        <span className="text-xs text-muted"> (среднее)</span>
                       </p>
-                    )}
-                    {row.avgFriendliness != null && row.canRateFriendliness && windowOpen && (
-                      <p className="mt-1 text-[10px] text-muted">Среднее: {row.avgFriendliness}%</p>
                     )}
                   </div>
                 </div>
