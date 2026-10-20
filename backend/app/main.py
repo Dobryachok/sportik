@@ -176,6 +176,55 @@ async def rows(session, query, params=None):
     return [dict(row) for row in result.mappings().all()]
 
 
+_table_columns_cache: dict[str, frozenset[str]] = {}
+
+
+async def table_columns(session: AsyncSession, table: str) -> frozenset[str]:
+    if table not in _table_columns_cache:
+        result = await session.execute(text(
+            'SELECT column_name FROM information_schema.columns '
+            'WHERE table_schema = current_schema() AND table_name = :table'
+        ), {'table': table})
+        _table_columns_cache[table] = frozenset(row[0] for row in result)
+    return _table_columns_cache[table]
+
+
+async def table_exists(session: AsyncSession, table: str) -> bool:
+    found = await session.scalar(text(
+        'SELECT 1 FROM information_schema.tables '
+        'WHERE table_schema = current_schema() AND table_name = :table'
+    ), {'table': table})
+    return found is not None
+
+
+def user_profile_fields_sql(columns: frozenset[str], *, include_start_completed: bool = True) -> str:
+    parts = [
+        'p.birth_date AS "birthDate"',
+        'p.marital_status AS "maritalStatus"',
+        'p.gender' if 'gender' in columns else 'NULL::varchar(20) AS gender',
+        'p.has_car AS "hasCar"',
+        'p.work_schedule AS "workSchedule"',
+        'p.social_links AS "socialLinks"',
+        'p.interests' if 'interests' in columns else "'[]'::jsonb AS interests",
+    ]
+    if include_start_completed:
+        parts.append(
+            'COALESCE(p.start_completed,false) AS "startCompleted"'
+            if 'start_completed' in columns else 'false AS "startCompleted"'
+        )
+    return ',\n        '.join(parts)
+
+
+def public_user_profile_fields_sql(columns: frozenset[str]) -> str:
+    return ',\n        '.join([
+        'p.marital_status AS "maritalStatus"',
+        'p.gender' if 'gender' in columns else 'NULL::varchar(20) AS gender',
+        'p.has_car AS "hasCar"',
+        'p.work_schedule AS "workSchedule"',
+        'p.interests' if 'interests' in columns else "'[]'::jsonb AS interests",
+    ])
+
+
 async def restart_redis_cache():
     # Redis contains ONLY a disposable public city catalog, never sessions.
     # Its container restarts under Compose; meanwhile reads use PostgreSQL.
@@ -320,10 +369,10 @@ async def current_user(request: Request, session: AsyncSession = Depends(db_sess
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, 'Authentication required')
     digest = hashlib.sha256(token.encode()).hexdigest()
-    user = (await session.execute(text("""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
-        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.gender,
-        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",p.interests,
-        COALESCE(p.start_completed,false) AS "startCompleted",
+    profile_columns = await table_columns(session, 'user_profiles')
+    profile_fields = user_profile_fields_sql(profile_columns)
+    user = (await session.execute(text(f"""SELECT u.id AS db_id,u.public_id AS id,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
+        {profile_fields},
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
         (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
@@ -446,10 +495,10 @@ async def register(payload: Credentials, request: Request, response: Response, s
 async def login(payload: Credentials, request: Request, response: Response, session: AsyncSession = Depends(db_session)):
     # Login is public: there is no cookie-authenticated state to protect yet.
     await throttle_auth(payload.email, 'login', 20)
-    user = (await session.execute(text('''SELECT u.id,u.public_id,u.password_hash,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
-        p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.gender,
-        p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",p.interests,
-        COALESCE(p.start_completed,false) AS "startCompleted",
+    profile_columns = await table_columns(session, 'user_profiles')
+    profile_fields = user_profile_fields_sql(profile_columns)
+    user = (await session.execute(text(f'''SELECT u.id,u.public_id,u.password_hash,u.name,u.city,u.avatar_url AS "avatarUrl",u.bio,
+        {profile_fields},
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
         (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
@@ -692,9 +741,11 @@ async def media(media_id: str, session: AsyncSession = Depends(db_session)):
 
 
 async def find_public_user(session: AsyncSession, public_id: str, viewer_id: int | None = None):
-    user = (await session.execute(text('''SELECT u.id AS db_id,u.public_id AS id,u.name,COALESCE(u.city,'') AS city,
+    profile_columns = await table_columns(session, 'user_profiles')
+    profile_fields = public_user_profile_fields_sql(profile_columns)
+    user = (await session.execute(text(f'''SELECT u.id AS db_id,u.public_id AS id,u.name,COALESCE(u.city,'') AS city,
         u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,p.social_links AS "socialLinks",
-        p.marital_status AS "maritalStatus",p.gender,p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.interests,
+        {profile_fields},
         EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
         (SELECT count(*)::integer FROM events e WHERE e.organizer_id=u.id) AS "eventCount",
         (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
@@ -765,8 +816,8 @@ async def event_rows(session, city: str | None, public_only=True):
       LEFT JOIN organizations o ON o.id=e.organization_id WHERE {where} ORDER BY e.start_at,e.id''', params)
     for event in events:
         event['startsAt'] = timestamp(event['startsAt'])
-        event['rating'] = float(event['rating'])
-        event['level'] = float(event['level'])
+        event['rating'] = float(event['rating'] if event['rating'] is not None else 0)
+        event['level'] = float(event['level'] if event['level'] is not None else 1)
         del event['internal_id']
     return events
 
@@ -788,20 +839,46 @@ async def event_rows_by_public_ids(session, public_ids: list[str], public_only=T
       LEFT JOIN organizations o ON o.id=e.organization_id WHERE {where} ORDER BY e.start_at,e.id''', {'ids': public_ids})
     for event in events:
         event['startsAt'] = timestamp(event['startsAt'])
-        event['rating'] = float(event['rating'])
-        event['level'] = float(event['level'])
+        event['rating'] = float(event['rating'] if event['rating'] is not None else 0)
+        event['level'] = float(event['level'] if event['level'] is not None else 1)
         del event['internal_id']
     return events
 
 
 async def notification_rows(session: AsyncSession, user_id: int):
-    items = await rows(session, '''SELECT 'n-' || n.id AS id,n.type,n.title,n.message AS body,n.is_read AS "isRead",
+    notification_columns = await table_columns(session, 'notifications')
+    has_teams = await table_exists(session, 'teams')
+    target_type_sql = (
+        'n.target_type AS "targetType"'
+        if 'target_type' in notification_columns else 'NULL::varchar(40) AS "targetType"'
+    )
+    target_public_sql = (
+        'n.target_public_id AS "targetPublicId"'
+        if 'target_public_id' in notification_columns else 'NULL::varchar(80) AS "targetPublicId"'
+    )
+    team_request_sql = (
+        'n.team_request_id AS "teamRequestId"'
+        if 'team_request_id' in notification_columns else 'NULL::bigint AS "teamRequestId"'
+    )
+    team_public_sql = (
+        't.public_id AS "teamPublicId"'
+        if has_teams and 'team_id' in notification_columns else 'NULL::varchar(80) AS "teamPublicId"'
+    )
+    teams_join_sql = (
+        'LEFT JOIN teams t ON t.id=n.team_id'
+        if has_teams and 'team_id' in notification_columns else ''
+    )
+    dismissed_filter = (
+        'n.dismissed_at IS NULL'
+        if 'dismissed_at' in notification_columns else 'TRUE'
+    )
+    items = await rows(session, f'''SELECT 'n-' || n.id AS id,n.type,n.title,n.message AS body,n.is_read AS "isRead",
        n.created_at AS "createdAt",e.public_id AS "eventId",o.public_id AS "organizationId",s.name AS "eventTag",e.start_at AS "eventStart",
-       n.target_type AS "targetType",n.target_public_id AS "targetPublicId",n.team_request_id AS "teamRequestId",
-       t.public_id AS "teamPublicId"
+       {target_type_sql},{target_public_sql},{team_request_sql},
+       {team_public_sql}
        FROM notifications n LEFT JOIN events e ON e.id=n.event_id LEFT JOIN organizations o ON o.id=n.organization_id
-       LEFT JOIN sports s ON s.id=e.sport_id LEFT JOIN teams t ON t.id=n.team_id
-       WHERE n.user_id=:user AND n.dismissed_at IS NULL ORDER BY n.created_at DESC,n.id DESC''', {'user': user_id})
+       LEFT JOIN sports s ON s.id=e.sport_id {teams_join_sql}
+       WHERE n.user_id=:user AND {dismissed_filter} ORDER BY n.created_at DESC,n.id DESC''', {'user': user_id})
     for item in items:
         item['createdAt'] = timestamp(item['createdAt'])
         if item.get('eventStart'):
@@ -861,9 +938,10 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
                     users=[public_user(user)] if user else [], organizations=[], sports=[], events=[], participations=[],
                     comments=[], notifications=notifications, favorites=favorites, likedEvents=liked)
     params = {'ids': event_ids, 'user_id': user['db_id'] if user else -1}
-    users = await rows(session, '''SELECT DISTINCT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,
-       p.birth_date AS "birthDate",p.marital_status AS "maritalStatus",p.gender,
-       p.has_car AS "hasCar",p.work_schedule AS "workSchedule",p.social_links AS "socialLinks",p.interests,
+    profile_columns = await table_columns(session, 'user_profiles')
+    profile_fields = user_profile_fields_sql(profile_columns, include_start_completed=False)
+    users = await rows(session, f'''SELECT DISTINCT u.public_id AS id,u.name,COALESCE(u.city,'') AS city,u.avatar_url AS "avatarUrl",COALESCE(u.bio,'') AS bio,
+       {profile_fields},
        EXTRACT(YEAR FROM age(current_date,p.birth_date))::integer AS age,
        (SELECT count(*)::integer FROM events owner_events WHERE owner_events.organizer_id=u.id) AS "eventCount",
        (SELECT count(*)::integer FROM user_follows f WHERE f.follower_id=u.id) AS "subscriptionsCount",
@@ -880,9 +958,11 @@ async def build_state(session: AsyncSession, city: str | None, user: dict | None
        owner.public_id AS "ownerUserId" FROM organizations o JOIN events e ON e.organization_id=o.id
        LEFT JOIN organization_members m ON m.organization_id=o.id AND m.role='OWNER' LEFT JOIN users owner ON owner.id=m.user_id
        WHERE e.public_id=ANY(:ids) ORDER BY o.public_id''', params)
-    sports = await rows(session, '''SELECT s.public_id AS id,s.name,s.slug,count(e.id)::integer AS "eventCount" FROM sports s
+    sport_columns = await table_columns(session, 'sports')
+    approved_sports_filter = "s.status='APPROVED'" if 'status' in sport_columns else 'TRUE'
+    sports = await rows(session, f'''SELECT s.public_id AS id,s.name,s.slug,count(e.id)::integer AS "eventCount" FROM sports s
        JOIN events e ON e.sport_id=s.id AND e.status='PUBLISHED' AND e.public_id=ANY(:ids)
-       WHERE s.status='APPROVED' GROUP BY s.id ORDER BY s.id''', params)
+       WHERE {approved_sports_filter} GROUP BY s.id ORDER BY s.id''', params)
     comments = await rows(session, '''SELECT 'c-' || c.id AS id,e.public_id AS "eventId",u.public_id AS "authorId",c.text,c.kind,c.created_at AS "createdAt"
        FROM event_comments c JOIN events e ON e.id=c.event_id JOIN users u ON u.id=c.user_id
        WHERE e.public_id=ANY(:ids) AND c.status='VISIBLE' ORDER BY c.id''', params)
@@ -915,7 +995,11 @@ async def state(request: Request, city: str | None = None, session: AsyncSession
         user = await current_user(request, session)
     except HTTPException as exc:
         if exc.status_code != 401: raise
-    return await build_state(session, city, user)
+    try:
+        return await build_state(session, city, user)
+    except Exception:
+        logger.exception('Failed to build /api/v1/state for city=%s', city)
+        raise
 
 
 @app.get('/api/v1/events')
