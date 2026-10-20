@@ -39,9 +39,101 @@ _chat_connections: dict[str, set[WebSocket]] = {}
 _chat_connections_lock = asyncio.Lock()
 
 
+async def seed_mock_catalog():
+    """Add a clean, idempotent catalog for local demos without demo credentials."""
+    if not settings.seed_mock_data:
+        return
+    try:
+        async with sessions() as session:
+            async with session.begin():
+                # A marker sport makes the operation safe to invoke after every backend start.
+                seeded = await session.scalar(text("SELECT 1 FROM sports WHERE public_id='sp-seed-volleyball'"))
+                if seeded:
+                    return
+                existing_users = await session.scalar(text('SELECT count(*) FROM users'))
+                if existing_users:
+                    logger.info('Skipping mock catalog: the database already contains user data')
+                    return
+                await session.execute(text('''INSERT INTO users(public_id,name,city,bio,status)
+                    VALUES
+                    ('u-seed-elena','Елена','Красноярск','Играю в волейбол и ищу компанию для активных выходных.','ACTIVE'),
+                    ('u-seed-artem','Артём','Красноярск','Бегаю по набережной и иногда собираю футбольные команды.','ACTIVE'),
+                    ('u-seed-nina','Нина','Красноярск','Люблю шахматы и дружеские турниры.','ACTIVE')
+                    ON CONFLICT (public_id) DO NOTHING'''))
+                await session.execute(text("""INSERT INTO user_roles(user_id,role_id)
+                    SELECT u.id,r.id FROM users u CROSS JOIN roles r
+                    WHERE u.public_id IN ('u-seed-elena','u-seed-artem','u-seed-nina') AND r.name='USER'
+                    ON CONFLICT DO NOTHING"""))
+                await session.execute(text("""INSERT INTO user_profiles(user_id,birth_date,marital_status,has_car,work_schedule,social_links)
+                    SELECT u.id, values.birth_date, values.marital_status, values.has_car, values.work_schedule, values.social_links::jsonb
+                    FROM (VALUES
+                        ('u-seed-elena', DATE '1998-05-14', 'В отношениях', true, 'Гибкий график', '[{\"platform\":\"Telegram\",\"url\":\"https://t.me/sportik_demo\",\"label\":\"@sportik_demo\"}]'),
+                        ('u-seed-artem', DATE '1994-11-02', 'Не женат / не замужем', false, 'Будни до 18:00', '[]'),
+                        ('u-seed-nina', DATE '1997-03-21', 'Не женат / не замужем', true, 'По вечерам', '[]')
+                    ) AS values(public_id,birth_date,marital_status,has_car,work_schedule,social_links)
+                    JOIN users u ON u.public_id=values.public_id
+                    ON CONFLICT (user_id) DO NOTHING"""))
+                await session.execute(text("""INSERT INTO sports(public_id,name,slug,status)
+                    VALUES
+                    ('sp-seed-volleyball','Волейбол','volleyball','APPROVED'),
+                    ('sp-seed-running','Бег','running','APPROVED'),
+                    ('sp-seed-chess','Шахматы','chess','APPROVED'),
+                    ('sp-seed-football','Футбол','football','APPROVED')
+                    ON CONFLICT (public_id) DO NOTHING"""))
+                organization_id = await session.scalar(text("""INSERT INTO organizations(
+                    public_id,name,description,city,latitude,longitude,email,phone,website,status)
+                    VALUES ('org-seed-sever','Клуб «Север»','Открытое спортивное сообщество для любителей командных игр и тренировок.',
+                    'Красноярск',56.010600,92.852600,'hello@example.org','+7 391 000-00-00','https://example.org','APPROVED')
+                    ON CONFLICT (public_id) DO UPDATE SET name=EXCLUDED.name RETURNING id"""))
+                await session.execute(text("""INSERT INTO organization_members(organization_id,user_id,role)
+                    SELECT :organization,u.id,'OWNER' FROM users u WHERE u.public_id='u-seed-elena'
+                    ON CONFLICT (organization_id,user_id) DO NOTHING"""), {'organization': organization_id})
+                await session.execute(text("""INSERT INTO events(
+                    public_id,organization_id,organizer_id,sport_id,title,description,event_type,location,district,city,start_at,
+                    capacity,join_mode,level,min_age,latitude,longitude,image_url,status,published_at)
+                    SELECT values.public_id, CASE WHEN values.organization_public_id IS NULL THEN NULL ELSE o.id END,
+                        organizer.id,sport.id,values.title,values.description,values.event_type,values.location,values.district,
+                        'Красноярск',now() + values.start_offset,values.capacity,values.join_mode,values.level,values.min_age,
+                        values.latitude,values.longitude,'/images/hero.png','PUBLISHED',now()
+                    FROM (VALUES
+                        ('ev-seed-volleyball','u-seed-elena','sp-seed-volleyball','org-seed-sever','Волейбол на Цимлянской',
+                         'Собираемся на дружескую игру. Возьмите форму, воду и хорошее настроение.','game','Цимлянская, 35А','Железнодорожный',INTERVAL '2 days 5 hours',14,'open',2.0,NULL,56.028100,92.804600),
+                        ('ev-seed-run','u-seed-artem','sp-seed-running',NULL,'Утренний забег 5 км',
+                         'Лёгкий темп по набережной — подойдёт начинающим.','training','Набережная Енисея','Центральный',INTERVAL '3 days 1 hour',20,'open',1.5,NULL,56.008600,92.872500),
+                        ('ev-seed-chess','u-seed-nina','sp-seed-chess',NULL,'Шахматный вечер',
+                         'Дружеские партии и мини-турнир по швейцарской системе.','game','проспект Мира, 15','Центральный',INTERVAL '4 days 4 hours',16,'application',2.5,14,56.010900,92.872900),
+                        ('ev-seed-football','u-seed-artem','sp-seed-football',NULL,'Футбол 7×7',
+                         'Играем на искусственном поле. Команды соберём на месте.','game','остров Татышев','Советский',INTERVAL '5 days 3 hours',14,'open',3.0,16,55.999300,92.894500)
+                    ) AS values(public_id,organizer_public_id,sport_public_id,organization_public_id,title,description,event_type,location,district,start_offset,capacity,join_mode,level,min_age,latitude,longitude)
+                    JOIN users organizer ON organizer.public_id=values.organizer_public_id
+                    JOIN sports sport ON sport.public_id=values.sport_public_id
+                    LEFT JOIN organizations o ON o.public_id=values.organization_public_id
+                    ON CONFLICT (public_id) DO NOTHING"""))
+                await session.execute(text("""INSERT INTO event_registrations(event_id,user_id,status)
+                    SELECT e.id,u.id,'REGISTERED' FROM events e JOIN users u ON u.public_id='u-seed-artem'
+                    WHERE e.public_id='ev-seed-volleyball'
+                    ON CONFLICT (event_id,user_id) DO NOTHING"""))
+                await session.execute(text("""INSERT INTO event_registrations(event_id,user_id,status)
+                    SELECT e.id,u.id,'PENDING' FROM events e JOIN users u ON u.public_id='u-seed-elena'
+                    WHERE e.public_id='ev-seed-chess'
+                    ON CONFLICT (event_id,user_id) DO NOTHING"""))
+                await session.execute(text("""INSERT INTO event_comments(event_id,user_id,text,kind)
+                    SELECT e.id,u.id,'Артём присоединился(-ась) к мероприятию','PARTICIPANT_JOINED'
+                    FROM events e JOIN users u ON u.public_id='u-seed-artem' WHERE e.public_id='ev-seed-volleyball'
+                    AND NOT EXISTS (SELECT 1 FROM event_comments c WHERE c.event_id=e.id AND c.kind='PARTICIPANT_JOINED')"""))
+                await session.execute(text("""INSERT INTO event_comments(event_id,user_id,text,kind)
+                    SELECT e.id,u.id,'Буду у входа в парк за десять минут до старта.','MESSAGE'
+                    FROM events e JOIN users u ON u.public_id='u-seed-elena' WHERE e.public_id='ev-seed-volleyball'
+                    AND NOT EXISTS (SELECT 1 FROM event_comments c WHERE c.event_id=e.id AND c.text='Буду у входа в парк за десять минут до старта.')"""))
+            logger.info('Mock catalog seeded')
+    except Exception:
+        logger.exception('Unable to seed mock catalog; backend will continue without it')
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
+    await seed_mock_catalog()
     yield
     await redis.aclose()
     await engine.dispose()

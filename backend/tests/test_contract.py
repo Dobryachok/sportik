@@ -134,3 +134,16 @@ def test_new_release_guards_exist_in_backend_source():
     assert 'grant_configured_admin_role' in source
     assert "EXTRACT(YEAR FROM age(current_date,p.birth_date))" in source
     assert 'p.birth_date AS "birthDate"' not in source[source.index('async def find_public_user'):source.index('async def event_rows')]
+
+
+def test_mock_seed_is_opt_in_configurable_and_safe_for_real_data():
+    source = (Path(__file__).parents[1] / 'app' / 'main.py').read_text(encoding='utf8')
+    config = (Path(__file__).parents[1] / 'app' / 'config.py').read_text(encoding='utf8')
+    assert 'async def seed_mock_catalog()' in source
+    assert 'await seed_mock_catalog()' in source
+    assert 'if not settings.seed_mock_data:' in source
+    assert "SELECT count(*) FROM users" in source
+    assert "Skipping mock catalog: the database already contains user data" in source
+    assert 'seed_mock_data: bool = True' in config
+    assert 'password_hash' not in source[source.index('async def seed_mock_catalog()'):source.index('@asynccontextmanager')]
+    assert 'auth_sessions' not in source[source.index('async def seed_mock_catalog()'):source.index('@asynccontextmanager')]

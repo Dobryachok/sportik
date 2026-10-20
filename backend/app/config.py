@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     # Optional bootstrap identity. The matching account still authenticates normally;
     # this setting only grants the ADMIN application role after a successful login.
     admin_email: str = ''
+    # Inserts safe mock catalog records after migrations during local/demo startup.
+    seed_mock_data: bool = True
 
     @property
     def allowed_origins(self) -> list[str]:

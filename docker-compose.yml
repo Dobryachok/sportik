@@ -36,6 +36,7 @@ services:
       GEO_CONTACT_EMAIL: ${GEO_CONTACT_EMAIL:-}
       GEO_USER_AGENT: ${GEO_USER_AGENT:-Sportik/1.0}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      SEED_MOCK_DATA: ${SEED_MOCK_DATA:-true}
     depends_on:
       postgres:
         condition: service_healthy
