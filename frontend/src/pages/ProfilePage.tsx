@@ -1,7 +1,9 @@
-import { ArrowLeft, Camera, Link2, LogOut, MapPin, Pencil, Plus, ShieldCheck, X } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { ArrowLeft, Camera, Link2, LogOut, MapPin, Pencil, Plus, Search, ShieldCheck, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { createTeam, fetchProfileMemberships } from '../api/discovery'
 import { useAppData } from '../app/AppDataContext'
+import type { ProfileMemberships } from '../data/discoveryTypes'
 import { PrimaryButton } from '../components/PrimaryButton'
 import { ThemeToggle } from '../components/ThemeToggle'
 import type { SocialLink } from '../data/types'
@@ -18,7 +20,7 @@ function optionalValue(value: string | null | undefined) {
 }
 
 export function ProfilePage() {
-  const { currentUser, city, error, saveProfile, changeAvatar, signOut } = useAppData()
+  const { currentUser, city, error, saveProfile, changeAvatar, signOut, state } = useAppData()
   const navigate = useNavigate()
   const inputRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
@@ -33,6 +35,20 @@ export function ProfilePage() {
   const [workSchedule, setWorkSchedule] = useState(currentUser?.workSchedule ?? '')
   const [socialLinks, setSocialLinks] = useState<SocialLink[]>(currentUser?.socialLinks ?? [])
   const [busy, setBusy] = useState(false)
+  const [memberships, setMemberships] = useState<ProfileMemberships | null>(null)
+  const [teamFormOpen, setTeamFormOpen] = useState(false)
+  const [teamName, setTeamName] = useState('')
+  const [teamCity, setTeamCity] = useState(currentUser?.city || city)
+  const [teamSportId, setTeamSportId] = useState('')
+  const [teamDescription, setTeamDescription] = useState('')
+  const [teamBusy, setTeamBusy] = useState(false)
+  const [teamError, setTeamError] = useState('')
+
+  useEffect(() => {
+    void fetchProfileMemberships()
+      .then(setMemberships)
+      .catch(() => setMemberships({ teams: [], groups: [] }))
+  }, [])
 
   if (!currentUser) return null
 
@@ -266,6 +282,76 @@ export function ProfilePage() {
               <button type="button" onClick={openEditing} className="text-sm font-semibold text-accent">Изменить</button>
             </div>
             <p className="mt-3 whitespace-pre-line text-sm leading-6 text-muted">{currentUser.bio || 'Добавьте немного информации о себе.'}</p>
+          </section>
+          <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-bold">Команды и группы</h2>
+              <button type="button" onClick={() => setTeamFormOpen((open) => !open)} className="text-sm font-semibold text-accent">
+                {teamFormOpen ? 'Скрыть' : 'Создать команду'}
+              </button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {(memberships?.teams ?? []).map((team) => (
+                <Link key={team.id} to={`/teams/${team.id}`} className="flex items-center justify-between rounded-xl border border-white/10 px-3 py-2.5 text-sm">
+                  <span className="font-semibold text-white">🏆 {team.name}</span>
+                  <span className="text-muted">{team.role === 'CAPTAIN' ? 'Капитан' : team.role}</span>
+                </Link>
+              ))}
+              {(memberships?.groups ?? []).map((group) => (
+                <div key={group.id} className="flex items-center justify-between rounded-xl border border-white/10 px-3 py-2.5 text-sm">
+                  <span className="font-semibold text-white">👥 {group.name}</span>
+                  <span className="text-muted">{group.role}</span>
+                </div>
+              ))}
+              {!memberships?.teams.length && !memberships?.groups.length && (
+                <p className="text-sm text-muted">Пока нет команд и групп.</p>
+              )}
+            </div>
+            {teamFormOpen && (
+              <form
+                className="mt-4 space-y-3 border-t border-white/10 pt-4"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  setTeamBusy(true)
+                  setTeamError('')
+                  void createTeam({
+                    name: teamName,
+                    city: teamCity,
+                    sportId: teamSportId,
+                    description: teamDescription,
+                  })
+                    .then(() => {
+                      setTeamName('')
+                      setTeamDescription('')
+                      setTeamFormOpen(false)
+                      return fetchProfileMemberships()
+                    })
+                    .then(setMemberships)
+                    .catch((err) => setTeamError(err instanceof Error ? err.message : 'Не удалось создать команду.'))
+                    .finally(() => setTeamBusy(false))
+                }}
+              >
+                <input required value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Название команды" className="w-full rounded-xl border border-white/10 bg-bg px-3 py-2.5 text-sm text-white" />
+                <input required value={teamCity} onChange={(e) => setTeamCity(e.target.value)} placeholder="Город" className="w-full rounded-xl border border-white/10 bg-bg px-3 py-2.5 text-sm text-white" />
+                <select required value={teamSportId} onChange={(e) => setTeamSportId(e.target.value)} className="w-full rounded-xl border border-white/10 bg-bg px-3 py-2.5 text-sm text-white">
+                  <option value="">Вид спорта</option>
+                  {state.sports.map((sport) => (
+                    <option key={sport.id} value={sport.id}>{sport.name}</option>
+                  ))}
+                </select>
+                <textarea value={teamDescription} onChange={(e) => setTeamDescription(e.target.value)} placeholder="Описание (необязательно)" rows={3} className="w-full rounded-xl border border-white/10 bg-bg px-3 py-2.5 text-sm text-white" />
+                {teamError && <p className="text-sm text-warning">{teamError}</p>}
+                <button type="submit" disabled={teamBusy} className="w-full rounded-xl bg-accent py-2.5 text-sm font-bold text-white disabled:opacity-60">
+                  {teamBusy ? 'Создаём…' : 'Создать команду'}
+                </button>
+              </form>
+            )}
+            <Link
+              to="/discovery"
+              className="mt-5 flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-accent px-4 text-sm font-bold text-white shadow-[0_8px_20px_rgba(0,174,239,0.22)]"
+            >
+              <Search size={18} /> Найти людей и команды
+            </Link>
           </section>
           <section className="mt-5 rounded-[1.7rem] border border-white/[0.08] bg-card p-4 sm:p-5">
             <div className="flex items-center justify-between gap-4"><h2 className="text-lg font-bold">Социальные сети</h2><button type="button" onClick={openEditing} className="inline-flex items-center gap-1 text-sm font-semibold text-accent"><Plus size={16} /> Добавить соцсеть</button></div>

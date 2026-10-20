@@ -24,6 +24,8 @@ import { SportHubPage } from '../pages/SportHubPage';
 import { SportikPage } from '../pages/SportikPage';
 import { TamagotchiPage } from '../pages/TamagotchiPage';
 import { TournamentsPage } from '../pages/TournamentsPage';
+import { DiscoveryPage } from '../pages/DiscoveryPage';
+import { TeamDetailPage } from '../pages/TeamDetailPage';
 
 const protectedPage = (node: ReactNode) => (
     <RequireAuth>{node}</RequireAuth>
@@ -106,6 +108,16 @@ export function AppRoutes() {
                 <Route
                     path="profile"
                     element={protectedPage(<ProfilePage />)}
+                />
+
+                <Route
+                    path="discovery"
+                    element={protectedPage(<DiscoveryPage />)}
+                />
+
+                <Route
+                    path="teams/:id"
+                    element={protectedPage(<TeamDetailPage />)}
                 />
 
                 <Route
