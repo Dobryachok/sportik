@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import httpx
 from PIL import Image, UnidentifiedImageError
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field, ValidationError, field_validator
@@ -1629,6 +1629,8 @@ async def create_event(payload: EventInput, user=Depends(require_user), session:
     city = (payload.city or user.get('city') or '').strip()
     if not city:
         raise HTTPException(422, 'city is required')
+    if not payload.address.strip():
+        raise HTTPException(422, 'address is required')
     if payload.latitude is None or payload.longitude is None:
         raise HTTPException(422, 'Select a valid address from suggestions')
     await session.commit()
@@ -1672,6 +1674,8 @@ async def update_event(event_id: str, payload: EventInput, user=Depends(require_
     city = (payload.city or '').strip()
     if not city:
         raise HTTPException(422, 'city is required')
+    if not payload.address.strip():
+        raise HTTPException(422, 'address is required')
     if payload.latitude is None or payload.longitude is None:
         raise HTTPException(422, 'Select a valid address from suggestions')
     await session.commit()
@@ -2126,19 +2130,126 @@ class ReverseGeoInput(BaseModel):
     longitude: float = Field(ge=-180, le=180)
 
 
+def _normalize_place_name(value: str) -> str:
+    return value.casefold().replace('ё', 'е').strip()
+
+
+def _city_matches(requested: str, *candidates: str) -> bool:
+    if not requested:
+        return True
+    norm_requested = _normalize_place_name(requested)
+    for raw in candidates:
+        if not raw:
+            continue
+        norm_candidate = _normalize_place_name(str(raw))
+        if norm_requested in norm_candidate or norm_candidate in norm_requested:
+            return True
+    return False
+
+
+def _suggestion_from_nominatim_item(item: dict, fallback_city: str) -> dict | None:
+    address = item.get('address')
+    if not isinstance(address, dict):
+        return None
+    try:
+        latitude, longitude = float(item['lat']), float(item['lon'])
+    except (KeyError, TypeError, ValueError):
+        return None
+    selected_city = (
+        address.get('city')
+        or address.get('town')
+        or address.get('village')
+        or address.get('municipality')
+        or fallback_city
+    )
+    district = (
+        address.get('city_district')
+        or address.get('district')
+        or address.get('borough')
+        or address.get('suburb')
+        or ''
+    )
+    label = str(item.get('display_name') or '').strip()
+    road = str(
+        address.get('road')
+        or address.get('pedestrian')
+        or address.get('footway')
+        or address.get('amenity')
+        or address.get('building')
+        or ''
+    ).strip()
+    house_number = str(address.get('house_number') or '').strip()
+    short_address = ', '.join(part for part in (road, house_number) if part) or label
+    if not label:
+        return None
+    return {
+        'label': label[:500],
+        'address': short_address[:255],
+        'city': str(selected_city or '')[:150],
+        'district': str(district or '')[:100],
+        'latitude': latitude,
+        'longitude': longitude,
+    }
+
+
+def _build_address_suggestions(raw_items: list, city: str) -> list[dict]:
+    suggestions: list[dict] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        parsed = _suggestion_from_nominatim_item(item, city)
+        if not parsed:
+            continue
+        address_parts = item.get('address') if isinstance(item.get('address'), dict) else {}
+        if city and not _city_matches(
+            city,
+            parsed['city'],
+            str(address_parts.get('state') or ''),
+            str(address_parts.get('county') or ''),
+        ):
+            continue
+        dedupe_key = f"{parsed['latitude']:.6f}:{parsed['longitude']:.6f}"
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        suggestions.append(parsed)
+    return suggestions[:8]
+
+
+async def _nominatim_search(client: httpx.AsyncClient, params: dict) -> list:
+    response = await client.get(
+        settings.geo_search_url,
+        params={
+            **params,
+            'format': 'jsonv2',
+            'addressdetails': 1,
+            'limit': 8,
+            'email': settings.geo_contact_email,
+        },
+    )
+    response.raise_for_status()
+    raw = response.json()
+    return raw if isinstance(raw, list) else []
+
+
 @app.get('/api/v1/geo/suggest')
-async def suggest_addresses(query: str, city: str | None = None):
-    """Return a small, Redis-cached set of Nominatim address choices for an event."""
-    query = query.strip()
+async def suggest_addresses(
+    query: str = Query(default=''),
+    q: str | None = None,
+    city: str | None = None,
+):
+    """Return Nominatim address choices scoped to the event city when possible."""
+    term = (q or query).strip()
     city = (city or '').strip()
-    if len(query) < 3:
+    if len(term) < 3:
         return []
-    if len(query) > 180 or len(city) > 150:
+    if len(term) > 180 or len(city) > 150:
         raise HTTPException(422, 'Address query is too long')
     if not settings.geo_contact_email:
-        raise HTTPException(503, 'Geocoder contact is not configured; enter the address manually')
-    lookup = f'{query}, {city}' if city and city.casefold() not in query.casefold() else query
-    cache_key = 'geo:suggest:v1:' + hashlib.sha256(lookup.casefold().encode()).hexdigest()
+        raise HTTPException(503, 'Geocoder contact is not configured')
+    lookup = f'{term}, {city}' if city and city.casefold() not in term.casefold() else term
+    cache_key = 'geo:suggest:v2:' + hashlib.sha256(f'{lookup}|{city}'.casefold().encode()).hexdigest()
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
@@ -2147,8 +2258,6 @@ async def suggest_addresses(query: str, city: str | None = None):
         logger.info('Address suggestion cache unavailable; querying Nominatim directly')
     global _geo_last_request
     try:
-        # Do not allow anonymous distinct queries to form an unbounded queue
-        # behind Nominatim's required one-request-per-second throttle.
         await asyncio.wait_for(_geo_lock.acquire(), timeout=0.1)
     except TimeoutError:
         raise HTTPException(429, 'Address suggestions are busy; try again in a moment')
@@ -2159,34 +2268,22 @@ async def suggest_addresses(query: str, city: str | None = None):
         _geo_last_request = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=settings.geo_timeout_seconds, headers={'User-Agent': settings.geo_user_agent}) as client:
-                response = await client.get(settings.geo_search_url, params={
-                    'q': lookup, 'format': 'jsonv2', 'addressdetails': 1, 'limit': 5,
-                    'email': settings.geo_contact_email,
-                })
-                response.raise_for_status()
-                raw_items = response.json()
+                raw_items: list = []
+                if city:
+                    raw_items = await _nominatim_search(
+                        client,
+                        {'street': term, 'city': city, 'countrycodes': 'ru'},
+                    )
+                if not raw_items:
+                    raw_items = await _nominatim_search(
+                        client,
+                        {'q': lookup, 'countrycodes': 'ru'},
+                    )
         except (httpx.HTTPError, ValueError):
-            raise HTTPException(503, 'Unable to suggest addresses; enter the address manually')
+            raise HTTPException(503, 'Unable to suggest addresses')
     finally:
         _geo_lock.release()
-    suggestions = []
-    for item in raw_items if isinstance(raw_items, list) else []:
-        address = item.get('address') if isinstance(item, dict) else None
-        if not isinstance(address, dict):
-            continue
-        try:
-            latitude, longitude = float(item['lat']), float(item['lon'])
-        except (KeyError, TypeError, ValueError):
-            continue
-        selected_city = address.get('city') or address.get('town') or address.get('village') or address.get('municipality') or city
-        district = address.get('city_district') or address.get('district') or address.get('borough') or address.get('suburb') or ''
-        label = str(item.get('display_name') or '').strip()
-        road = str(address.get('road') or address.get('pedestrian') or address.get('footway') or address.get('amenity') or address.get('building') or '').strip()
-        house_number = str(address.get('house_number') or '').strip()
-        short_address = ', '.join(part for part in (road, house_number) if part) or label
-        if label and short_address:
-            suggestions.append({'label': label, 'address': short_address[:255], 'city': str(selected_city or '')[:150],
-                                'district': str(district or '')[:100], 'latitude': latitude, 'longitude': longitude})
+    suggestions = _build_address_suggestions(raw_items, city)
     try:
         await redis.set(cache_key, json.dumps(suggestions, ensure_ascii=False), ex=600)
     except RedisError:
@@ -2196,7 +2293,7 @@ async def suggest_addresses(query: str, city: str | None = None):
 
 @app.get('/api/v1/addresses/search')
 async def addresses_search(q: str, city: str | None = None):
-    return await suggest_addresses(q, city)
+    return await suggest_addresses(q=q, city=city)
 
 
 @app.post('/api/v1/geo/reverse')

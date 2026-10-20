@@ -49,6 +49,10 @@ export function CreateEventPage() {
   }, [refresh])
 
   useEffect(() => {
+    if (city?.trim()) setLocationCity(city)
+  }, [city])
+
+  useEffect(() => {
     let cancelled = false
     void fetchMyOrganizations()
       .then((items) => {
@@ -150,6 +154,7 @@ export function CreateEventPage() {
         </div>
         <LocationPicker
           required
+          lockCity
           address={address}
           city={locationCity}
           district={district}
@@ -158,7 +163,6 @@ export function CreateEventPage() {
           onChange={(location) => {
             setAddressError('')
             setAddress(location.address)
-            setLocationCity(location.city)
             setDistrict(location.district)
             setLatitude(location.latitude)
             setLongitude(location.longitude)

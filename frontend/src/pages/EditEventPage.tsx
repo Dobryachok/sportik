@@ -104,6 +104,7 @@ export function EditEventPage() {
         </div>
         <LocationPicker
           required
+          lockCity
           address={address}
           city={city}
           district={district}
@@ -112,7 +113,6 @@ export function EditEventPage() {
           onChange={(location) => {
             setAddressError('')
             setAddress(location.address)
-            setCity(location.city)
             setDistrict(location.district)
             setLatitude(location.latitude)
             setLongitude(location.longitude)
