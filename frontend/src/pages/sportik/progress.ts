@@ -46,6 +46,6 @@ export function nextProgress(closedCount: number, stage: SportikStage) {
   return {
     visitTarget: 10,
     challengesNeeded: Math.max(0, 1 - closedCount),
-    nextLabel: 'Средний',
+      nextLabel: 'Атлет',
   }
 }

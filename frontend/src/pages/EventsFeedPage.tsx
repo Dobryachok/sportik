@@ -48,13 +48,13 @@ export function EventsFeedPage() {
           </Link>
         </div>
         {state.sports.length ? (
-          <div className="grid grid-cols-1 gap-4 min-[520px]:grid-cols-2">
+          <div className="grid grid-cols-2 gap-3 md:gap-4">
             {state.sports.map((sport, index) => (
               <Link
                 key={sport.id}
                 to={`/sport/${sport.slug}`}
                 style={{ aspectRatio: '1 / 1' }}
-                className={`group relative overflow-hidden rounded-[1.45rem] border border-white/[0.08] bg-gradient-to-br p-6 sm:p-8 ${
+                className={`group relative overflow-hidden rounded-[1.15rem] border border-white/[0.08] bg-gradient-to-br p-4 md:rounded-[1.45rem] md:p-8 ${
                   sport.backgroundImage ? 'sport-tile-photo' : sportTones[index % sportTones.length]
                 }`}
               >
@@ -66,14 +66,14 @@ export function EventsFeedPage() {
                 )}
                 <div className="relative flex h-full flex-col justify-between">
                   <span
-                    className={`sport-tile-title text-xl font-bold leading-tight sm:text-2xl ${
+                    className={`sport-tile-title text-base font-bold leading-tight md:text-2xl ${
                       sport.backgroundImage ? 'text-white' : 'text-black'
                     }`}
                   >
                     {sport.name}
                   </span>
                   <span
-                    className={`sport-tile-meta text-sm sm:text-base ${
+                    className={`sport-tile-meta text-xs md:text-base ${
                       sport.backgroundImage ? 'text-white/90' : 'text-black/65'
                     }`}
                   >

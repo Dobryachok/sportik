@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber'
 import { Bounds, Center, OrbitControls, useGLTF } from '@react-three/drei'
 import { TOUCH } from 'three'
 import { SportikModel } from './sportik/SportikModel'
-import { ChevronDown, ChevronLeft, ChevronUp, Lock, Palette, ShoppingBag, Trophy } from 'lucide-react'
+import { ChevronLeft, Lock, Palette, ShoppingBag, Trophy } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAppData } from '../app/AppDataContext'
 import { useTheme } from '../app/ThemeContext'
@@ -93,7 +93,7 @@ export function SportikPage() {
   const sceneBackground = theme === 'dark' ? '#0d0f11' : '#ffffff'
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const [menuOpen, setMenuOpen] = useState(true)
+  const [sheetExpanded, setSheetExpanded] = useState(true)
   const [hintStep, setHintStep] = useState<number | null>(null)
   const [panel, setPanel] = useState<PanelView>('home')
   const [selectedChallengeId, setSelectedChallengeId] = useState<string | null>(null)
@@ -126,7 +126,7 @@ export function SportikPage() {
     const openFromQuery = searchParams.get('shop') === '1'
     const justUnlocked = shopUnlocked && !wasShopUnlocked.current
     if (shopUnlocked && (openFromQuery || justUnlocked)) {
-      setMenuOpen(true)
+      setSheetExpanded(true)
       setPanel('shop')
     }
     wasShopUnlocked.current = shopUnlocked
@@ -236,14 +236,24 @@ export function SportikPage() {
     setHintStep((step) => (step === null ? null : step + 1))
   }
 
-  const showMenu = menuOpen || hintsOpen
+  const sheetOpen = sheetExpanded || hintsOpen
+  const panelTitle =
+    panel === 'shop' ? 'Магазин' : panel === 'customize' ? 'Кастом' : panel === 'challenges' ? 'Челленжи' : panel === 'challenge-detail' ? 'Челлендж' : null
+
+  const expandSheet = () => setSheetExpanded(true)
+  const collapseSheet = () => {
+    if (hintsOpen) return
+    setSheetExpanded(false)
+    setPanel('home')
+    setSelectedChallengeId(null)
+  }
   const challengeHint =
     goal.challengesNeeded > 0
       ? `закрой ещё ${goal.challengesNeeded} ${goal.challengesNeeded === 1 ? 'челленж' : 'челленжа'}`
       : null
 
   return (
-    <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded-[1.35rem]">
+    <div className="relative min-h-[calc(100dvh-var(--app-nav-height)-env(safe-area-inset-bottom,0px))] w-full flex-1 overflow-hidden md:min-h-[32rem] md:rounded-[1.35rem]">
       <Canvas
         className="absolute inset-0"
         camera={{ position: [0, 1.15, 3.1], fov: 40 }}
@@ -273,68 +283,77 @@ export function SportikPage() {
         />
       </Canvas>
 
-      <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center px-3">
-        <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-card/90 px-4 py-3 shadow-[0_10px_24px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 md:top-3 md:px-3">
+        <div className="w-full border-b border-white/10 bg-card/95 px-4 py-2.5 backdrop-blur-xl md:mx-auto md:max-w-lg md:rounded-2xl md:border md:shadow-[0_10px_24px_rgba(0,0,0,0.2)]">
           <div className="flex items-center justify-between gap-3 text-sm">
             <p className="font-semibold text-white">{STAGE_LABELS[stage]}</p>
-            <p className="text-muted">
-              {points} {points % 10 === 1 && points % 100 !== 11 ? 'очко' : points % 10 >= 2 && points % 10 <= 4 && (points % 100 < 10 || points % 100 >= 20) ? 'очка' : 'очков'}
-            </p>
+            <p className="text-xs font-semibold text-accent">{points} очк.</p>
           </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
             <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${visitRatio * 100}%` }} />
           </div>
-          <p className="mt-2 text-xs leading-4 text-muted">
-            Посещения {visits} / {goal.visitTarget}
-            {goal.nextLabel ? ` до формы «${goal.nextLabel}»` : ' — максимальная форма'}
-            {challengeHint ? ` · ${challengeHint}` : ''}
+          <p className="mt-1.5 truncate text-[11px] leading-4 text-muted">
+            {visits}/{goal.visitTarget} посещений{goal.nextLabel ? ` → «${goal.nextLabel}»` : ''}{challengeHint ? ` · ${challengeHint}` : ''}
           </p>
         </div>
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center px-3 py-3">
-        {showMenu ? (
-          <div className="pointer-events-auto w-full max-w-lg rounded-[1.35rem] border border-white/10 bg-card/95 p-3 shadow-[0_-12px_28px_rgba(0,0,0,0.28)] backdrop-blur-xl">
-            <div className="relative mb-3 flex min-h-9 items-center justify-center">
+      <div
+        className={`pointer-events-auto absolute inset-x-0 bottom-0 z-20 flex flex-col overflow-hidden border-t border-white/10 bg-card/98 shadow-[0_-16px_40px_rgba(0,0,0,0.22)] backdrop-blur-xl transition-[max-height] duration-300 ease-out md:bottom-3 md:left-1/2 md:w-full md:max-w-lg md:-translate-x-1/2 md:rounded-t-[1.35rem] md:border md:border-b-0 ${
+          sheetOpen ? 'max-h-[min(72vh,34rem)]' : 'max-h-12'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => (sheetExpanded ? collapseSheet() : expandSheet())}
+          disabled={hintsOpen}
+          className="flex w-full shrink-0 flex-col items-center gap-1 border-b border-white/5 py-2.5 disabled:opacity-60"
+          aria-label={sheetExpanded ? 'Свернуть меню' : 'Развернуть меню'}
+        >
+          <span className="h-1 w-12 rounded-full bg-white/25" />
+          {!sheetExpanded && <span className="text-[11px] font-medium text-muted">Меню</span>}
+        </button>
+
+        {sheetOpen && (
+          <div className="flex min-h-0 flex-1 flex-col px-4 pb-2 pt-1">
+            <div className="relative mb-2 flex min-h-8 shrink-0 items-center justify-center">
               {panel !== 'home' && !hintsOpen ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (panel === 'challenge-detail') {
-                      setPanel('challenges')
-                      return
-                    }
-                    setPanel('home')
-                    setSelectedChallengeId(null)
-                  }}
-                  className="absolute left-0 top-1/2 flex h-9 items-center gap-1 -translate-y-1/2 rounded-full px-2 text-sm font-medium text-muted transition-colors hover:bg-white/5 hover:text-white"
-                >
-                  <ChevronLeft size={18} />
-                  Назад
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (panel === 'challenge-detail') {
+                        setPanel('challenges')
+                        return
+                      }
+                      setPanel('home')
+                      setSelectedChallengeId(null)
+                    }}
+                    className="absolute left-0 flex h-8 items-center gap-0.5 rounded-lg px-1 text-sm font-medium text-muted hover:text-white"
+                  >
+                    <ChevronLeft size={18} />
+                    Назад
+                  </button>
+                  {panelTitle && <p className="text-sm font-semibold text-white">{panelTitle}</p>}
+                </>
               ) : (
-                <span className="h-1 w-10 rounded-full bg-white/20" aria-hidden />
+                <p className="text-sm font-semibold text-white">Меню Спортика</p>
               )}
-              <button
-                type="button"
-                onClick={() => setMenuOpen(false)}
-                disabled={hintsOpen}
-                className="absolute right-0 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full text-muted transition-colors hover:bg-white/5 hover:text-white disabled:opacity-40"
-                aria-label="Скрыть меню"
-              >
-                <ChevronDown size={20} />
-              </button>
             </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {panel === 'home' && (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-2 pb-1">
                 {menuCards.map((card) => {
                   const Icon = card.icon
                   const shopLocked = card.id === 'shop' && !shopUnlocked
+                  const customizeLocked = card.id === 'customize' && !shopUnlocked
+                  const locked = shopLocked || customizeLocked
                   return (
                     <button
                       key={card.id}
                       type="button"
                       onClick={() => {
+                        expandSheet()
                         if (card.id === 'challenges') setPanel('challenges')
                         if (card.id === 'shop') {
                           if (shopLocked) {
@@ -345,7 +364,7 @@ export function SportikPage() {
                           setPanel('shop')
                         }
                         if (card.id === 'customize') {
-                          if (shopLocked) {
+                          if (customizeLocked) {
                             navigate('/tamagotchi')
                             return
                           }
@@ -353,22 +372,17 @@ export function SportikPage() {
                           setPanel('customize')
                         }
                       }}
-                      className={`flex min-h-[6.5rem] flex-col items-center justify-center gap-2 rounded-2xl border px-2 py-3 text-center transition-colors ${
-                        shopLocked
-                          ? 'border-white/10 bg-card-elevated/70 opacity-70'
-                          : 'border-white/10 bg-card-elevated hover:border-accent/40 hover:bg-white/5'
+                      className={`flex min-h-[4.75rem] flex-col items-center justify-center gap-1.5 rounded-xl border px-1 py-2.5 text-center transition-colors ${
+                        locked
+                          ? 'border-white/10 bg-card-elevated/60 opacity-70'
+                          : 'border-white/10 bg-card-elevated hover:border-accent/40'
                       }`}
                     >
-                      <span className="sportik-menu-tile-icon relative flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
-                        <Icon size={20} />
-                        {shopLocked && (
-                          <Lock size={12} className="absolute -right-1 -top-1 rounded-full bg-card text-white" />
-                        )}
+                      <span className="sportik-menu-tile-icon relative flex h-9 w-9 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                        <Icon size={18} />
+                        {locked && <Lock size={10} className="absolute -right-0.5 -top-0.5 text-muted" />}
                       </span>
-                      <span className="text-sm font-semibold text-white">{card.title}</span>
-                      <span className="text-[11px] leading-tight text-muted">
-                        {shopLocked ? 'Пройдите Старт' : card.subtitle}
-                      </span>
+                      <span className="text-xs font-semibold text-white">{card.title}</span>
                     </button>
                   )
                 })}
@@ -409,17 +423,8 @@ export function SportikPage() {
             {panel === 'challenge-detail' && selectedChallenge && (
               <ChallengeDetail challenge={selectedChallenge} closed={closedIds.includes(selectedChallenge.id)} />
             )}
+            </div>
           </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setMenuOpen(true)}
-            className="sportik-menu-open-btn pointer-events-auto flex items-center gap-1 rounded-full border border-white/10 bg-card/95 px-4 py-2 text-sm font-medium text-white shadow-[0_-8px_20px_rgba(0,0,0,0.24)] backdrop-blur-xl"
-            aria-label="Открыть меню"
-          >
-            Меню
-            <ChevronUp size={16} />
-          </button>
         )}
       </div>
 
@@ -482,15 +487,12 @@ function ShopPanel({
   const items = shopTab === 'case' ? [] : WAREHOUSE_SHOP.filter((item) => item.category === shopTab)
 
   return (
-    <div className="max-h-[min(22rem,50vh)] space-y-3 overflow-y-auto px-1 pb-1">
+    <div className="space-y-2.5 pb-1">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-white">Магазин → склад</p>
-        <p className="rounded-full bg-accent/15 px-2.5 py-1 text-[11px] font-bold text-accent">{balance} очков</p>
+        <p className="text-xs text-muted">Баланс</p>
+        <p className="rounded-full bg-accent/15 px-2.5 py-0.5 text-[11px] font-bold text-accent">{balance} очков</p>
       </div>
-      <p className="text-xs leading-5 text-muted">
-        Формы по видам спорта открываются после посещения события и настраиваются в кастомизации. Здесь — только складские вещи и кейсы.
-      </p>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
         {SHOP_TABS.map((tab) => (
           <button
             key={tab.id}
@@ -508,42 +510,37 @@ function ShopPanel({
       {shopTab === 'case' ? (
         <div className="space-y-2">
           {LOOT_CASES.map((crate) => (
-            <div key={crate.id} className="rounded-2xl border border-white/10 bg-card-elevated p-3">
+            <div key={crate.id} className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-card-elevated px-3 py-2.5">
               <p className="text-sm font-semibold text-white">{crate.title}</p>
-              <p className="mt-1 text-[11px] leading-4 text-muted">{crate.description}</p>
               <button
                 type="button"
                 onClick={() => onOpenCase(crate.id)}
-                className="mt-3 w-full rounded-xl bg-accent py-2.5 text-xs font-bold text-white hover:bg-accent-hover"
+                className="shrink-0 rounded-lg bg-accent px-3 py-2 text-[11px] font-bold text-white hover:bg-accent-hover"
               >
-                Открыть за {crate.price} очков
+                {crate.price} очк.
               </button>
             </div>
           ))}
         </div>
       ) : shopTab === 'champion' ? (
-        <p className="rounded-xl border border-dashed border-white/15 px-3 py-4 text-xs text-muted">
-          Трофеи за 1–2–3 место на турнирах (токены чемпиона) появятся в следующем обновлении.
-        </p>
+        <p className="py-6 text-center text-xs text-muted">Трофеи чемпиона — скоро</p>
       ) : (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="space-y-2">
           {items.map((item) => {
             const owned = ownedIds.includes(item.id)
             return (
-              <div key={item.id} className="rounded-2xl border border-white/10 bg-card-elevated p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm font-semibold text-white">{item.title}</p>
-                  {item.badge && <span className="shrink-0 rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold text-muted">{item.badge}</span>}
+              <div key={item.id} className="flex items-center gap-3 rounded-xl border border-white/10 bg-card-elevated px-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-white">{item.title}</p>
+                  <p className="text-[11px] font-semibold text-accent">{item.price} очков</p>
                 </div>
-                <p className="mt-1 text-[11px] leading-4 text-muted">{item.description}</p>
-                <p className="mt-2 text-xs font-semibold text-accent">{item.price} очков</p>
                 <button
                   type="button"
                   disabled={owned}
                   onClick={() => onBuy(item.id)}
-                  className="mt-2 w-full rounded-xl border border-white/10 py-2 text-[11px] font-bold text-white disabled:opacity-40"
+                  className="shrink-0 rounded-lg bg-accent px-3 py-2 text-[11px] font-bold text-white disabled:bg-white/10 disabled:text-muted"
                 >
-                  {owned ? 'На складе' : 'Купить'}
+                  {owned ? '✓' : 'Купить'}
                 </button>
               </div>
             )
@@ -580,13 +577,7 @@ function CustomizePanel({
   const baseActive = !equip.warehouseId && !equip.sportKey
 
   return (
-    <div className="max-h-[min(22rem,50vh)] space-y-4 overflow-y-auto px-1 pb-1">
-      <p className="text-sm font-semibold text-white">Кастомизация</p>
-      <p className="text-xs leading-5 text-muted">
-        Уровень тамагочи: <span className="font-semibold text-white">{STAGE_LABELS[stage]}</span>.
-        {canPickVariant ? ' Можно выбрать любую фигуру в открытом виде спорта.' : ' Телосложение подстраивается под уровень автоматически.'}
-      </p>
-
+    <div className="space-y-3 pb-1">
       <button
         type="button"
         onClick={onEquipBase}
@@ -599,7 +590,7 @@ function CustomizePanel({
       </button>
 
       {unlockedRows.length === 0 ? (
-        <p className="text-xs text-muted">Сходите на одно прошедшее мероприятие по виду спорта — здесь появится строка из трёх моделей.</p>
+        <p className="text-center text-xs text-muted py-2">Нет открытых видов спорта</p>
       ) : (
         <div className="space-y-3">
           {unlockedRows.map((row) => {
@@ -634,8 +625,8 @@ function CustomizePanel({
         </div>
       )}
 
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted">Склад</p>
+      <div className="border-t border-white/10 pt-3">
+        <p className="text-xs font-semibold text-white">Склад</p>
         {ownedItems.length === 0 ? (
           <p className="mt-2 text-xs text-muted">Купите вещи в магазине или откройте кейс.</p>
         ) : (
